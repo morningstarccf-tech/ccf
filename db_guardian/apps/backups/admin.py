@@ -1,0 +1,147 @@
+"""
+备份管理的 Admin 后台配置
+
+提供备份策略和备份记录的后台管理界面。
+"""
+from django.contrib import admin
+from django.utils.html import format_html
+from apps.backups.models import BackupStrategy, BackupRecord
+
+
+@admin.register(BackupStrategy)
+class BackupStrategyAdmin(admin.ModelAdmin):
+    """
+    备份策略 Admin 配置
+    """
+    
+    list_display = [
+        'id', 'name', 'instance', 'backup_type', 'cron_expression',
+        'retention_days', 'is_enabled_badge', 'compress', 'created_at'
+    ]
+    
+    list_filter = [
+        'is_enabled', 'backup_type', 'compress', 'created_at'
+    ]
+    
+    search_fields = [
+        'name', 'instance__alias', 'cron_expression'
+    ]
+    
+    readonly_fields = [
+        'created_by', 'created_at', 'updated_at'
+    ]
+    
+    fieldsets = (
+        ('基本信息', {
+            'fields': ('name', 'instance', 'databases')
+        }),
+        ('备份配置', {
+            'fields': ('cron_expression', 'backup_type', 'retention_days', 'compress')
+        }),
+        ('存储设置', {
+            'fields': ('storage_path', 'is_enabled')
+        }),
+        ('元数据', {
+            'fields': ('created_by', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    list_per_page = 20
+    
+    def is_enabled_badge(self, obj):
+        """显示启用状态徽章"""
+        if obj.is_enabled:
+            return format_html(
+                '<span style="color: green; font-weight: bold;">✓ 启用</span>'
+            )
+        return format_html(
+            '<span style="color: red;">✗ 禁用</span>'
+        )
+    is_enabled_badge.short_description = '状态'
+    
+    def save_model(self, request, obj, form, change):
+        """保存时设置创建者"""
+        if not change:  # 新建时
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
+
+@admin.register(BackupRecord)
+class BackupRecordAdmin(admin.ModelAdmin):
+    """
+    备份记录 Admin 配置
+    """
+    
+    list_display = [
+        'id', 'instance', 'database_name', 'backup_type',
+        'status_badge', 'file_size_mb', 'start_time', 'duration'
+    ]
+    
+    list_filter = [
+        'status', 'backup_type', 'start_time', 'created_at'
+    ]
+    
+    search_fields = [
+        'instance__alias', 'database_name', 'file_path'
+    ]
+    
+    readonly_fields = [
+        'instance', 'strategy', 'database_name', 'backup_type',
+        'status', 'file_path', 'file_size_mb', 'start_time',
+        'end_time', 'error_message', 'created_by', 'created_at'
+    ]
+    
+    fieldsets = (
+        ('备份信息', {
+            'fields': ('instance', 'strategy', 'database_name', 'backup_type')
+        }),
+        ('执行状态', {
+            'fields': ('status', 'start_time', 'end_time', 'error_message')
+        }),
+        ('文件信息', {
+            'fields': ('file_path', 'file_size_mb')
+        }),
+        ('元数据', {
+            'fields': ('created_by', 'created_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    list_per_page = 20
+    
+    # 禁用添加和修改
+    def has_add_permission(self, request):
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        return False
+    
+    def status_badge(self, obj):
+        """显示状态徽章"""
+        status_colors = {
+            'pending': 'gray',
+            'running': 'blue',
+            'success': 'green',
+            'failed': 'red',
+        }
+        color = status_colors.get(obj.status, 'gray')
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">{}</span>',
+            color,
+            obj.get_status_display()
+        )
+    status_badge.short_description = '状态'
+    
+    def duration(self, obj):
+        """显示备份耗时"""
+        seconds = obj.get_duration_seconds()
+        if seconds is not None:
+            if seconds < 60:
+                return f"{seconds:.1f} 秒"
+            elif seconds < 3600:
+                return f"{seconds/60:.1f} 分钟"
+            else:
+                return f"{seconds/3600:.1f} 小时"
+        return "-"
+    duration.short_description = '耗时'
