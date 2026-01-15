@@ -22,11 +22,11 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.cargo/bin:$PATH"
 
 # 复制项目文件
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml ./
 COPY . .
 
-# 安装 Python 依赖
-RUN uv sync --frozen
+# 安装 Python 依赖（存在 uv.lock 时使用 --frozen）
+RUN if [ -f uv.lock ]; then uv sync --frozen; else uv sync; fi
 
 # 创建必要的目录
 RUN mkdir -p logs staticfiles media
