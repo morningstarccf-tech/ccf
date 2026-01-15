@@ -3,9 +3,11 @@
 
 提供备份策略和备份记录的后台管理界面。
 """
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.http import HttpResponseRedirect
 from django.utils.html import format_html
 from apps.backups.models import BackupStrategy, BackupRecord
+from apps.backups.tasks import execute_backup_task
 
 
 @admin.register(BackupStrategy)
@@ -26,6 +28,9 @@ class BackupStrategyAdmin(admin.ModelAdmin):
     search_fields = [
         'name', 'instance__alias', 'cron_expression'
     ]
+
+    actions = ['trigger_backup_action']
+    change_form_template = 'admin/backups/backupstrategy/change_form.html'
     
     readonly_fields = [
         'created_by', 'created_at', 'updated_at'
@@ -65,6 +70,33 @@ class BackupStrategyAdmin(admin.ModelAdmin):
         if not change:  # 新建时
             obj.created_by = request.user
         super().save_model(request, obj, form, change)
+
+    def response_change(self, request, obj):
+        """处理立即备份按钮"""
+        if "_run_backup_now" in request.POST:
+            try:
+                task = execute_backup_task.delay(strategy_id=obj.id)
+                messages.success(
+                    request,
+                    f'已创建备份任务，任务ID: {task.id}'
+                )
+            except Exception as exc:
+                messages.error(request, f'立即备份失败: {exc}')
+            return HttpResponseRedirect(request.path)
+        return super().response_change(request, obj)
+
+    @admin.action(description='立即执行备份')
+    def trigger_backup_action(self, request, queryset):
+        """批量触发备份任务"""
+        created_count = 0
+        for strategy in queryset:
+            try:
+                execute_backup_task.delay(strategy_id=strategy.id)
+                created_count += 1
+            except Exception as exc:
+                messages.error(request, f'{strategy.name} 触发失败: {exc}')
+        if created_count:
+            messages.success(request, f'已创建 {created_count} 个备份任务')
 
 
 @admin.register(BackupRecord)
