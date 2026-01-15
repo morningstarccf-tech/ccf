@@ -48,6 +48,21 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
                 self.fields['password'].initial = ''
                 self.fields['ssh_password'].initial = ''
 
+        def clean(self):
+            """保持密码为空时不覆盖已有值，创建时强制填写密码。"""
+            cleaned_data = super().clean()
+
+            if self.instance and self.instance.pk:
+                if not cleaned_data.get('password'):
+                    cleaned_data['password'] = self.instance.password
+                if not cleaned_data.get('ssh_password'):
+                    cleaned_data['ssh_password'] = self.instance.ssh_password
+            else:
+                if not cleaned_data.get('password'):
+                    self.add_error('password', '创建时必须填写密码')
+
+            return cleaned_data
+
     form = MySQLInstanceForm
 
     readonly_fields = [
