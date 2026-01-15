@@ -216,6 +216,7 @@ class BackupRecord(models.Model):
         _('远程路径'),
         max_length=500,
         blank=True,
+        default='',
         help_text=_('远程服务器备份路径')
     )
 
@@ -223,6 +224,7 @@ class BackupRecord(models.Model):
         _('对象存储路径'),
         max_length=500,
         blank=True,
+        default='',
         help_text=_('对象存储路径（如 OSS）')
     )
     

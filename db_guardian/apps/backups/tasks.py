@@ -75,7 +75,9 @@ def execute_backup_task(self, strategy_id=None, instance_id=None,
             status='running',
             start_time=timezone.now(),
             created_by_id=user_id,
-            base_backup=base_backup
+            base_backup=base_backup,
+            remote_path='',
+            object_storage_path=''
         )
         
         logger.info(f"开始备份任务: 记录ID={backup_record.id}, 实例={instance.alias}")
