@@ -30,6 +30,12 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
             widget=forms.PasswordInput(render_value=False),
             help_text='MySQL 连接密码（留空则不修改，创建时必填）'
         )
+        ssh_password = forms.CharField(
+            label='SSH 密码',
+            required=False,
+            widget=forms.PasswordInput(render_value=False),
+            help_text='SSH 密码（留空则不修改）'
+        )
 
         class Meta:
             model = MySQLInstance
@@ -40,13 +46,14 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
             # 不将数据库中加密的密码回显到表单中
             if self.instance and self.instance.pk:
                 self.fields['password'].initial = ''
+                self.fields['ssh_password'].initial = ''
 
     form = MySQLInstanceForm
 
     readonly_fields = [
         'status', 'last_check_time', 'version',
         'created_by', 'created_at', 'updated_at',
-        'password_info'
+        'password_info', 'ssh_password_info'
     ]
     
     fieldsets = (
@@ -55,6 +62,15 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
         }),
         ('连接配置', {
             'fields': ('host', 'port', 'username', 'password', 'charset')
+        }),
+        ('部署与备份配置', {
+            'fields': (
+                'deployment_type', 'docker_container_name', 'mysql_service_name',
+                'data_dir', 'xtrabackup_bin'
+            )
+        }),
+        ('远程执行（SSH）', {
+            'fields': ('ssh_host', 'ssh_port', 'ssh_user', 'ssh_password', 'ssh_key_path')
         }),
         ('状态信息', {
             'fields': ('status', 'version', 'last_check_time')
@@ -95,6 +111,16 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
             )
         return format_html('<span style="color: red;">未设置</span>')
     password_info.short_description = '密码'
+
+    def ssh_password_info(self, obj):
+        """SSH 密码信息（不显示明文）"""
+        if obj.ssh_password:
+            return format_html(
+                '<span style="color: green;">已设置（加密存储）</span><br>'
+                '<small style="color: gray;">SSH 密码已加密存储</small>'
+            )
+        return format_html('<span style="color: red;">未设置</span>')
+    ssh_password_info.short_description = 'SSH 密码'
     
     def save_model(self, request, obj, form, change):
         """保存时设置创建者"""

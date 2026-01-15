@@ -69,6 +69,11 @@ class MySQLInstance(models.Model):
         ('offline', _('离线')),
         ('error', _('错误')),
     ]
+
+    DEPLOYMENT_CHOICES = [
+        ('docker', _('Docker容器')),
+        ('systemd', _('系统服务')),
+    ]
     
     alias = models.CharField(
         _('实例别名'),
@@ -98,6 +103,75 @@ class MySQLInstance(models.Model):
     password = models.TextField(
         _('密码'),
         help_text=_('加密存储的密码')
+    )
+
+    deployment_type = models.CharField(
+        _('部署方式'),
+        max_length=20,
+        choices=DEPLOYMENT_CHOICES,
+        default='systemd',
+        help_text=_('MySQL 实例运行方式（Docker 容器或系统服务）')
+    )
+
+    docker_container_name = models.CharField(
+        _('容器名称'),
+        max_length=200,
+        blank=True,
+        help_text=_('Docker 部署时的容器名称')
+    )
+
+    mysql_service_name = models.CharField(
+        _('服务名称'),
+        max_length=200,
+        default='mysql',
+        help_text=_('系统服务名称（systemd），如 mysql 或 mysqld')
+    )
+
+    data_dir = models.CharField(
+        _('数据目录'),
+        max_length=500,
+        blank=True,
+        help_text=_('MySQL 数据目录（用于冷备/热备物理备份）')
+    )
+
+    ssh_host = models.CharField(
+        _('SSH 主机'),
+        max_length=255,
+        blank=True,
+        help_text=_('执行备份命令的远程主机地址')
+    )
+
+    ssh_port = models.PositiveIntegerField(
+        _('SSH 端口'),
+        default=22,
+        help_text=_('SSH 连接端口')
+    )
+
+    ssh_user = models.CharField(
+        _('SSH 用户'),
+        max_length=100,
+        blank=True,
+        help_text=_('SSH 用户名')
+    )
+
+    ssh_password = models.TextField(
+        _('SSH 密码'),
+        blank=True,
+        help_text=_('加密存储的 SSH 密码')
+    )
+
+    ssh_key_path = models.CharField(
+        _('SSH 私钥路径'),
+        max_length=500,
+        blank=True,
+        help_text=_('SSH 私钥路径（优先于密码）')
+    )
+
+    xtrabackup_bin = models.CharField(
+        _('XtraBackup 路径'),
+        max_length=300,
+        default='xtrabackup',
+        help_text=_('xtrabackup 可执行文件路径或命令名')
     )
     
     team = models.ForeignKey(
@@ -184,9 +258,12 @@ class MySQLInstance(models.Model):
             if old_instance and old_instance.password != self.password:
                 # 密码已更改，需要重新加密
                 self.password = PasswordEncryptor.encrypt(self.password)
+            if old_instance and old_instance.ssh_password != self.ssh_password:
+                self.ssh_password = PasswordEncryptor.encrypt(self.ssh_password)
         else:
             # 新建时加密密码
             self.password = PasswordEncryptor.encrypt(self.password)
+            self.ssh_password = PasswordEncryptor.encrypt(self.ssh_password)
         
         super().save(*args, **kwargs)
     
@@ -198,6 +275,15 @@ class MySQLInstance(models.Model):
             str: 明文密码
         """
         return PasswordEncryptor.decrypt(self.password)
+
+    def get_decrypted_ssh_password(self) -> str:
+        """
+        获取解密后的 SSH 密码
+
+        Returns:
+            str: 明文密码
+        """
+        return PasswordEncryptor.decrypt(self.ssh_password)
     
     def test_connection(self) -> tuple[bool, str]:
         """

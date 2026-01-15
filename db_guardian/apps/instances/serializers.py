@@ -26,6 +26,9 @@ class MySQLInstanceSerializer(serializers.ModelSerializer):
             'id', 'alias', 'host', 'port', 'username',
             'team', 'team_name', 'description', 'status', 'status_display',
             'last_check_time', 'version', 'charset',
+            'deployment_type', 'docker_container_name', 'mysql_service_name',
+            'data_dir', 'ssh_host', 'ssh_port', 'ssh_user', 'ssh_key_path',
+            'xtrabackup_bin',
             'created_by', 'created_by_username',
             'created_at', 'updated_at', 'database_count'
         ]
@@ -51,12 +54,22 @@ class MySQLInstanceCreateSerializer(serializers.ModelSerializer):
         style={'input_type': 'password'},
         help_text='MySQL 连接密码（将被加密存储）'
     )
+    ssh_password = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        style={'input_type': 'password'},
+        help_text='SSH 密码（将被加密存储）'
+    )
     
     class Meta:
         model = MySQLInstance
         fields = [
             'alias', 'host', 'port', 'username', 'password',
-            'team', 'description', 'charset'
+            'team', 'description', 'charset',
+            'deployment_type', 'docker_container_name', 'mysql_service_name',
+            'data_dir', 'ssh_host', 'ssh_port', 'ssh_user', 'ssh_password',
+            'ssh_key_path', 'xtrabackup_bin'
         ]
     
     def validate_alias(self, value):
@@ -80,6 +93,21 @@ class MySQLInstanceCreateSerializer(serializers.ModelSerializer):
             if not request.user.is_superuser:
                 if not team.members.filter(id=request.user.id).exists():
                     raise serializers.ValidationError("您不是该团队的成员，无法创建实例")
+        deployment_type = attrs.get('deployment_type')
+        if deployment_type == 'docker' and not attrs.get('docker_container_name'):
+            raise serializers.ValidationError({
+                'docker_container_name': 'Docker 部署方式必须填写容器名称'
+            })
+        if deployment_type == 'systemd' and not attrs.get('mysql_service_name'):
+            raise serializers.ValidationError({
+                'mysql_service_name': '系统服务部署必须填写服务名称'
+            })
+        ssh_host = attrs.get('ssh_host')
+        ssh_user = attrs.get('ssh_user')
+        if ssh_host and not ssh_user:
+            raise serializers.ValidationError({
+                'ssh_user': '配置 SSH 主机时必须填写 SSH 用户'
+            })
         return attrs
     
     def create(self, validated_data):
@@ -104,12 +132,22 @@ class MySQLInstanceUpdateSerializer(serializers.ModelSerializer):
         style={'input_type': 'password'},
         help_text='MySQL 连接密码（留空则不修改）'
     )
+    ssh_password = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        style={'input_type': 'password'},
+        help_text='SSH 密码（留空则不修改）'
+    )
     
     class Meta:
         model = MySQLInstance
         fields = [
             'alias', 'host', 'port', 'username', 'password',
-            'description', 'charset'
+            'description', 'charset',
+            'deployment_type', 'docker_container_name', 'mysql_service_name',
+            'data_dir', 'ssh_host', 'ssh_port', 'ssh_user', 'ssh_password',
+            'ssh_key_path', 'xtrabackup_bin'
         ]
     
     def validate_alias(self, value):
@@ -122,6 +160,7 @@ class MySQLInstanceUpdateSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         """更新实例，如果密码为空则不更新密码"""
         password = validated_data.pop('password', None)
+        ssh_password = validated_data.pop('ssh_password', None)
         
         # 更新其他字段
         for attr, value in validated_data.items():
@@ -130,6 +169,8 @@ class MySQLInstanceUpdateSerializer(serializers.ModelSerializer):
         # 如果提供了新密码，则更新密码
         if password:
             instance.password = password
+        if ssh_password:
+            instance.ssh_password = ssh_password
         
         instance.save()
         return instance
