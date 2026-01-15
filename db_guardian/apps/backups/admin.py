@@ -3,8 +3,10 @@
 
 提供备份策略和备份记录的后台管理界面。
 """
+import json
 from django.contrib import admin, messages
 from django.http import HttpResponseRedirect
+from django import forms
 from django.utils.html import format_html
 from apps.backups.models import BackupStrategy, BackupRecord
 from apps.backups.tasks import execute_backup_task
@@ -15,6 +17,61 @@ class BackupStrategyAdmin(admin.ModelAdmin):
     """
     备份策略 Admin 配置
     """
+
+    class BackupStrategyForm(forms.ModelForm):
+        databases = forms.CharField(
+            label='数据库列表',
+            required=False,
+            widget=forms.Textarea(attrs={'rows': 2}),
+            help_text='支持 JSON 数组或逗号分隔，如 ["db1","db2"] 或 db1,db2'
+        )
+
+        class Meta:
+            model = BackupStrategy
+            fields = '__all__'
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            if self.instance and self.instance.pk and self.instance.databases:
+                if isinstance(self.instance.databases, list):
+                    self.fields['databases'].initial = ','.join(self.instance.databases)
+                else:
+                    self.fields['databases'].initial = str(self.instance.databases)
+
+        def clean_databases(self):
+            raw = self.cleaned_data.get('databases')
+            if raw is None or raw == '':
+                return []
+            if isinstance(raw, list):
+                return raw
+
+            text = str(raw).strip()
+            if not text:
+                return []
+
+            try:
+                value = json.loads(text)
+                if isinstance(value, list):
+                    return [str(item).strip() for item in value if str(item).strip()]
+                if isinstance(value, str):
+                    text = value
+                else:
+                    raise forms.ValidationError('数据库列表必须是 JSON 数组或逗号分隔字符串')
+            except json.JSONDecodeError:
+                pass
+
+            parts = [part.strip() for part in text.replace('\n', ',').split(',')]
+            return [part for part in parts if part]
+
+        def clean(self):
+            cleaned_data = super().clean()
+            backup_type = cleaned_data.get('backup_type')
+            databases = cleaned_data.get('databases')
+            if backup_type in ['hot', 'cold', 'incremental'] and databases:
+                self.add_error('databases', '热备/冷备/增量备份不支持指定数据库列表')
+            return cleaned_data
+
+    form = BackupStrategyForm
     
     list_display = [
         'id', 'name', 'instance', 'backup_type', 'cron_expression',
