@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y \
 
 # 安装 uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.cargo/bin:$PATH"
+ENV PATH="/root/.local/bin:/root/.cargo/bin:$PATH"
 
 # 复制项目文件
 COPY pyproject.toml ./
