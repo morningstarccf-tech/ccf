@@ -48,6 +48,7 @@ services:
       - SECRET_KEY=${SECRET_KEY}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - SECURE_SSL_REDIRECT=${SECURE_SSL_REDIRECT:-false}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=db_guardian
@@ -80,6 +81,7 @@ services:
       - DJANGO_ENV=production
       - SECRET_KEY=${SECRET_KEY}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - SECURE_SSL_REDIRECT=${SECURE_SSL_REDIRECT:-false}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=db_guardian
@@ -104,6 +106,7 @@ services:
       - DJANGO_ENV=production
       - SECRET_KEY=${SECRET_KEY}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - SECURE_SSL_REDIRECT=${SECURE_SSL_REDIRECT:-false}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=db_guardian
