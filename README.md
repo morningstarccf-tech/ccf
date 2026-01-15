@@ -55,6 +55,20 @@ DB-Guardian 是一个一体化 MySQL 数据库管理与备份平台的后端服�
 - 也可调用 `/api/instances/{id}/refresh-status/` 立即刷新。
 - 若未启动 Celery，状态只会在请求时刷新，不会自动定时更新。
 
+## 备份类型说明
+- 全量备份：使用 `mysqldump` 进行逻辑备份（可选压缩）
+- 增量备份：使用 `xtrabackup` 做物理增量备份（需基准备份）
+- 热备份：使用 `xtrabackup` 做物理全量备份（不停库）
+- 冷备份：停止 MySQL 服务或容器后复制数据目录
+
+### 热备/冷备/增量备份前置条件
+- 实例必须配置 `data_dir`（MySQL 数据目录）
+- 实例必须配置 SSH 连接信息（`ssh_host` / `ssh_user`，可选 `ssh_password` 或 `ssh_key_path`）
+- 冷备份需配置部署方式：
+  - Docker：填写 `docker_container_name`
+  - systemd：填写 `mysql_service_name`
+- 目标主机需安装 `xtrabackup`（用于热备/增量）
+
 ## 安全提示
 - 开发环境未配置 `ENCRYPTION_KEY` 时会自动生成并写入 `db_guardian/.encryption_key`，请勿随意删除。
 - 生产环境必须显式设置 `ENCRYPTION_KEY`，否则服务会拒绝启动。
