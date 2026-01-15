@@ -313,6 +313,12 @@ class BackupRecordViewSet(viewsets.ModelViewSet):
                 'success': False,
                 'message': '只能从成功的备份中恢复'
             }, status=status.HTTP_400_BAD_REQUEST)
+
+        if record.backup_type in ['hot', 'cold', 'incremental']:
+            return Response({
+                'success': False,
+                'message': '物理备份恢复需离线操作，暂不支持在线恢复'
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         target_database = serializer.validated_data.get('target_database')
         

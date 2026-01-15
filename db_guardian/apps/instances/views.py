@@ -376,11 +376,14 @@ class MySQLInstanceViewSet(viewsets.ModelViewSet):
         
         database_name = serializer.validated_data.get('database_name')
         compress = serializer.validated_data.get('compress', True)
+        backup_type = serializer.validated_data.get('backup_type', 'full')
         
         # 创建异步备份任务
         task = execute_backup_task.delay(
             instance_id=instance.id,
             database_name=database_name,
+            backup_type=backup_type,
+            compress=compress,
             user_id=request.user.id
         )
         

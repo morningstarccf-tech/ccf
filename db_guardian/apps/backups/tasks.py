@@ -14,8 +14,9 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, max_retries=3)
-def execute_backup_task(self, strategy_id=None, instance_id=None, 
-                       database_name=None, user_id=None):
+def execute_backup_task(self, strategy_id=None, instance_id=None,
+                        database_name=None, user_id=None, backup_type=None,
+                        compress=None):
     """
     执行备份任务
     
@@ -44,24 +45,37 @@ def execute_backup_task(self, strategy_id=None, instance_id=None,
             databases = strategy.databases or [database_name] if database_name else None
             compress = strategy.compress
             storage_path = strategy.get_storage_path()
+            backup_type = strategy.backup_type
         elif instance_id:
             instance = MySQLInstance.objects.get(id=instance_id)
             strategy = None
             databases = [database_name] if database_name else None
-            compress = True
+            compress = True if compress is None else compress
             storage_path = None
+            backup_type = backup_type or 'full'
         else:
             raise ValueError("必须提供 strategy_id 或 instance_id")
+
+        base_backup = None
+        if backup_type == 'incremental':
+            base_backup = BackupRecord.objects.filter(
+                instance=instance,
+                backup_type__in=['hot', 'incremental'],
+                status='success'
+            ).order_by('-created_at').first()
+            if not base_backup:
+                raise Exception("增量备份需要先有成功的热备/增量备份作为基准")
         
         # 2. 创建备份记录
         backup_record = BackupRecord.objects.create(
             instance=instance,
             strategy=strategy,
             database_name=database_name or '',
-            backup_type='full',
+            backup_type=backup_type,
             status='running',
             start_time=timezone.now(),
-            created_by_id=user_id
+            created_by_id=user_id,
+            base_backup=base_backup
         )
         
         logger.info(f"开始备份任务: 记录ID={backup_record.id}, 实例={instance.alias}")
@@ -75,7 +89,9 @@ def execute_backup_task(self, strategy_id=None, instance_id=None,
                 result = executor.execute_backup(
                     database_name=db,
                     compress=compress,
-                    storage_path=storage_path
+                    storage_path=storage_path,
+                    backup_type=backup_type,
+                    base_backup=base_backup
                 )
                 
                 if not result['success']:
@@ -85,7 +101,9 @@ def execute_backup_task(self, strategy_id=None, instance_id=None,
             result = executor.execute_backup(
                 database_name=database_name,
                 compress=compress,
-                storage_path=storage_path
+                storage_path=storage_path,
+                backup_type=backup_type,
+                base_backup=base_backup
             )
             
             if not result['success']:

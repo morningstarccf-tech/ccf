@@ -22,6 +22,8 @@ class BackupStrategy(models.Model):
     BACKUP_TYPE_CHOICES = [
         ('full', _('全量备份')),
         ('incremental', _('增量备份')),
+        ('hot', _('热备份')),
+        ('cold', _('冷备份')),
     ]
     
     name = models.CharField(
@@ -56,7 +58,7 @@ class BackupStrategy(models.Model):
         max_length=20,
         choices=BACKUP_TYPE_CHOICES,
         default='full',
-        help_text=_('备份类型：全量或增量')
+        help_text=_('备份类型：全量、增量、热备或冷备')
     )
     
     retention_days = models.IntegerField(
@@ -148,6 +150,8 @@ class BackupRecord(models.Model):
     BACKUP_TYPE_CHOICES = [
         ('full', _('全量备份')),
         ('incremental', _('增量备份')),
+        ('hot', _('热备份')),
+        ('cold', _('冷备份')),
     ]
     
     instance = models.ForeignKey(
@@ -180,7 +184,17 @@ class BackupRecord(models.Model):
         max_length=20,
         choices=BACKUP_TYPE_CHOICES,
         default='full',
-        help_text=_('备份类型：全量或增量')
+        help_text=_('备份类型：全量、增量、热备或冷备')
+    )
+
+    base_backup = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='incremental_children',
+        verbose_name=_('基准备份'),
+        help_text=_('增量备份的基准备份记录')
     )
     
     status = models.CharField(
@@ -264,3 +278,4 @@ class BackupRecord(models.Model):
         if self.start_time and self.end_time:
             return (self.end_time - self.start_time).total_seconds()
         return None
+

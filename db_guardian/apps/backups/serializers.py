@@ -67,6 +67,13 @@ class BackupStrategyCreateSerializer(serializers.ModelSerializer):
                 "Cron 表达式格式错误，应为 5 个字段（分 时 日 月 周），如 '0 2 * * *'"
             )
         return value
+
+    def validate_backup_type(self, value):
+        """验证备份类型"""
+        valid_types = dict(BackupStrategy.BACKUP_TYPE_CHOICES).keys()
+        if value not in valid_types:
+            raise serializers.ValidationError("不支持的备份类型")
+        return value
     
     def validate_instance_id(self, value):
         """
@@ -103,6 +110,42 @@ class BackupStrategyCreateSerializer(serializers.ModelSerializer):
         if value is not None and not isinstance(value, list):
             raise serializers.ValidationError("数据库列表必须是数组格式")
         return value
+
+    def validate(self, attrs):
+        """验证策略与实例的备份配置"""
+        from apps.instances.models import MySQLInstance
+
+        instance_id = attrs.get('instance_id')
+        backup_type = attrs.get('backup_type')
+        if not instance_id or not backup_type:
+            return attrs
+
+        instance = MySQLInstance.objects.get(id=instance_id)
+
+        if backup_type in ['hot', 'cold', 'incremental']:
+            if not instance.data_dir:
+                raise serializers.ValidationError({
+                    'data_dir': '热备/冷备/增量备份必须配置实例数据目录'
+                })
+            if not instance.ssh_host or not instance.ssh_user:
+                raise serializers.ValidationError({
+                    'ssh_host': '热备/冷备/增量备份必须配置 SSH 连接信息'
+                })
+            if attrs.get('databases'):
+                raise serializers.ValidationError({
+                    'databases': '热备/冷备/增量备份不支持指定数据库列表'
+                })
+        if backup_type == 'cold':
+            if instance.deployment_type == 'docker' and not instance.docker_container_name:
+                raise serializers.ValidationError({
+                    'docker_container_name': '冷备份（Docker）必须配置容器名称'
+                })
+            if instance.deployment_type == 'systemd' and not instance.mysql_service_name:
+                raise serializers.ValidationError({
+                    'mysql_service_name': '冷备份（系统服务）必须配置服务名称'
+                })
+
+        return attrs
     
     def create(self, validated_data):
         """
@@ -176,6 +219,7 @@ class BackupRecordSerializer(serializers.ModelSerializer):
     backup_type_display = serializers.CharField(source='get_backup_type_display', read_only=True)
     duration_seconds = serializers.SerializerMethodField()
     download_url = serializers.SerializerMethodField()
+    base_backup_id = serializers.IntegerField(source='base_backup.id', read_only=True)
     
     class Meta:
         model = BackupRecord
@@ -183,7 +227,8 @@ class BackupRecordSerializer(serializers.ModelSerializer):
             'id', 'instance', 'strategy', 'database_name', 'backup_type',
             'backup_type_display', 'status', 'status_display', 'file_path',
             'file_size_mb', 'start_time', 'end_time', 'duration_seconds',
-            'error_message', 'created_by', 'created_at', 'download_url'
+            'error_message', 'created_by', 'created_at', 'download_url',
+            'base_backup_id'
         ]
         read_only_fields = '__all__'
     
@@ -225,6 +270,12 @@ class ManualBackupSerializer(serializers.Serializer):
     用于验证手动触发备份的请求参数。
     """
     
+    backup_type = serializers.ChoiceField(
+        choices=BackupRecord.BACKUP_TYPE_CHOICES,
+        default='full',
+        help_text='备份类型'
+    )
+
     database_name = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -235,6 +286,17 @@ class ManualBackupSerializer(serializers.Serializer):
         default=True,
         help_text='是否压缩备份文件'
     )
+
+    def validate(self, attrs):
+        """验证手动备份参数"""
+        backup_type = attrs.get('backup_type', 'full')
+        database_name = attrs.get('database_name')
+
+        if backup_type in ['hot', 'cold', 'incremental'] and database_name:
+            raise serializers.ValidationError({
+                'database_name': '热备/冷备/增量备份不支持指定单个数据库'
+            })
+        return attrs
     
     def validate_database_name(self, value):
         """
@@ -324,12 +386,14 @@ class BackupRecordListSerializer(serializers.ModelSerializer):
     strategy_name = serializers.CharField(source='strategy.name', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     backup_type_display = serializers.CharField(source='get_backup_type_display', read_only=True)
+    base_backup_id = serializers.IntegerField(source='base_backup.id', read_only=True)
     
     class Meta:
         model = BackupRecord
         fields = [
             'id', 'instance_alias', 'strategy_name', 'database_name',
             'backup_type', 'backup_type_display', 'status', 'status_display',
-            'file_size_mb', 'start_time', 'end_time', 'created_at'
+            'file_size_mb', 'start_time', 'end_time', 'created_at',
+            'base_backup_id'
         ]
         read_only_fields = '__all__'

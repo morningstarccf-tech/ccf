@@ -4,6 +4,7 @@
 包含备份执行、恢复执行、策略管理等核心功能。
 """
 import os
+import shlex
 import subprocess
 import gzip
 import shutil
@@ -14,8 +15,79 @@ from django.utils import timezone
 from django_celery_beat.models import PeriodicTask, CrontabSchedule
 import logging
 import json
+import paramiko
 
 logger = logging.getLogger(__name__)
+
+
+class RemoteExecutor:
+    """远程命令执行与文件传输（支持本地直连）"""
+
+    def __init__(self, instance):
+        self.instance = instance
+        self.host = instance.ssh_host.strip() if instance.ssh_host else ''
+        self.port = instance.ssh_port or 22
+        self.user = instance.ssh_user.strip() if instance.ssh_user else ''
+        self.password = instance.get_decrypted_ssh_password() if instance.ssh_password else None
+        self.key_path = instance.ssh_key_path.strip() if instance.ssh_key_path else ''
+
+    def _is_remote(self) -> bool:
+        return bool(self.host and self.user)
+
+    def _connect(self):
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        if self.key_path:
+            key = paramiko.RSAKey.from_private_key_file(self.key_path)
+            client.connect(self.host, port=self.port, username=self.user, pkey=key, timeout=10)
+        else:
+            client.connect(self.host, port=self.port, username=self.user, password=self.password, timeout=10)
+        return client
+
+    def run(self, command: str, timeout: int = 3600) -> tuple[int, str, str]:
+        if not self._is_remote():
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
+            return result.returncode, result.stdout, result.stderr
+
+        client = self._connect()
+        try:
+            stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
+            exit_status = stdout.channel.recv_exit_status()
+            return exit_status, stdout.read().decode(), stderr.read().decode()
+        finally:
+            client.close()
+
+    def download(self, remote_path: str, local_path: Path) -> None:
+        if not self._is_remote():
+            shutil.copy2(remote_path, local_path)
+            return
+
+        client = self._connect()
+        try:
+            sftp = client.open_sftp()
+            sftp.get(remote_path, str(local_path))
+            sftp.close()
+        finally:
+            client.close()
+
+    def upload(self, local_path: Path, remote_path: str) -> None:
+        if not self._is_remote():
+            shutil.copy2(local_path, remote_path)
+            return
+
+        client = self._connect()
+        try:
+            sftp = client.open_sftp()
+            sftp.put(str(local_path), remote_path)
+            sftp.close()
+        finally:
+            client.close()
 
 
 class BackupExecutor:
@@ -34,7 +106,8 @@ class BackupExecutor:
         """
         self.instance = instance
     
-    def execute_backup(self, database_name=None, compress=True, storage_path=None):
+    def execute_backup(self, database_name=None, compress=True, storage_path=None,
+                       backup_type='full', base_backup=None):
         """
         执行备份
         
@@ -51,6 +124,12 @@ class BackupExecutor:
                 - error_message: 错误信息（如果失败）
         """
         try:
+            if backup_type in ['hot', 'cold', 'incremental'] and database_name:
+                return {
+                    'success': False,
+                    'error_message': '热备/冷备/增量备份不支持指定单个数据库'
+                }
+
             # 1. 生成备份文件名
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             db_suffix = database_name if database_name else 'all'
@@ -69,46 +148,23 @@ class BackupExecutor:
             # 完整文件路径
             file_path = storage_path / filename
             
-            # 3. 构建 mysqldump 命令
-            dump_cmd = self._build_mysqldump_command(database_name, str(file_path))
-            
-            # 4. 执行备份命令
-            logger.info(f"开始备份: {self.instance.alias} - {db_suffix}")
-            result = subprocess.run(
-                dump_cmd,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=3600  # 1小时超时
-            )
-            
-            if result.returncode != 0:
-                error_msg = result.stderr or "备份命令执行失败"
-                logger.error(f"备份失败: {error_msg}")
-                return {
-                    'success': False,
-                    'error_message': error_msg
-                }
-            
-            # 5. 压缩文件（如果需要）
-            final_path = file_path
-            if compress:
-                compressed_path = self._compress_file(file_path)
-                if compressed_path:
-                    final_path = compressed_path
-                    # 删除原始未压缩文件
-                    if file_path.exists():
-                        file_path.unlink()
-            
-            # 6. 计算文件大小
-            file_size_mb = final_path.stat().st_size / (1024 * 1024)
-            
-            logger.info(f"备份成功: {final_path}, 大小: {file_size_mb:.2f} MB")
-            
+            if backup_type in ['full']:
+                return self._execute_logical_backup(
+                    database_name, compress, storage_path, filename
+                )
+
+            if backup_type in ['hot']:
+                return self._execute_hot_backup(storage_path, timestamp, compress)
+
+            if backup_type in ['cold']:
+                return self._execute_cold_backup(storage_path, timestamp, compress)
+
+            if backup_type in ['incremental']:
+                return self._execute_incremental_backup(storage_path, timestamp, compress, base_backup)
+
             return {
-                'success': True,
-                'file_path': str(final_path),
-                'file_size_mb': round(file_size_mb, 2)
+                'success': False,
+                'error_message': f'不支持的备份类型: {backup_type}'
             }
             
         except subprocess.TimeoutExpired:
@@ -170,6 +226,206 @@ class BackupExecutor:
         cmd = ' '.join(cmd_parts) + f' > "{output_file}"'
         
         return cmd
+
+    def _execute_logical_backup(self, database_name, compress, storage_path, filename):
+        """执行逻辑备份（mysqldump）"""
+        file_path = storage_path / filename
+        dump_cmd = self._build_mysqldump_command(database_name, str(file_path))
+
+        logger.info(f"开始逻辑备份: {self.instance.alias}")
+        result = subprocess.run(
+            dump_cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=3600  # 1小时超时
+        )
+
+        if result.returncode != 0:
+            error_msg = result.stderr or "备份命令执行失败"
+            logger.error(f"备份失败: {error_msg}")
+            return {
+                'success': False,
+                'error_message': error_msg
+            }
+
+        final_path = file_path
+        if compress:
+            compressed_path = self._compress_file(file_path)
+            if compressed_path:
+                final_path = compressed_path
+                if file_path.exists():
+                    file_path.unlink()
+
+        file_size_mb = final_path.stat().st_size / (1024 * 1024)
+        logger.info(f"备份成功: {final_path}, 大小: {file_size_mb:.2f} MB")
+
+        return {
+            'success': True,
+            'file_path': str(final_path),
+            'file_size_mb': round(file_size_mb, 2)
+        }
+
+    def _build_xtrabackup_command(self, target_dir, incremental_base_dir=None):
+        """构建 xtrabackup 命令"""
+        password = self.instance.get_decrypted_password()
+        cmd_parts = [
+            shlex.quote(self.instance.xtrabackup_bin or 'xtrabackup'),
+            '--backup',
+            f'--target-dir={shlex.quote(target_dir)}',
+            f'--datadir={shlex.quote(self.instance.data_dir)}',
+            f'--host={shlex.quote(self.instance.host)}',
+            f'--port={self.instance.port}',
+            f'--user={shlex.quote(self.instance.username)}',
+        ]
+        if password:
+            cmd_parts.append(f'--password={shlex.quote(password)}')
+        if incremental_base_dir:
+            cmd_parts.append(f'--incremental-basedir={shlex.quote(incremental_base_dir)}')
+        return ' '.join(cmd_parts)
+
+    def _remote_root(self):
+        safe_alias = self.instance.alias.replace(' ', '_')
+        return f"/tmp/db_guardian/{safe_alias}"
+
+    def _archive_remote_dir(self, executor, remote_dir, compress):
+        parent_dir = str(Path(remote_dir).parent)
+        base_name = Path(remote_dir).name
+        suffix = '.tar.gz' if compress else '.tar'
+        archive_path = f"{remote_dir}{suffix}"
+        tar_flag = '-czf' if compress else '-cf'
+        cmd = (
+            f"tar -C {shlex.quote(parent_dir)} {tar_flag} "
+            f"{shlex.quote(archive_path)} {shlex.quote(base_name)}"
+        )
+        code, _, err = executor.run(cmd, timeout=3600)
+        if code != 0:
+            raise RuntimeError(err or "打包备份目录失败")
+        return archive_path
+
+    def _strip_archive_suffix(self, filename: str) -> str:
+        name = Path(filename).name
+        if name.endswith('.tar.gz'):
+            return name[:-7]
+        if name.endswith('.tar'):
+            return name[:-4]
+        return Path(name).stem
+
+    def _execute_hot_backup(self, storage_path, timestamp, compress):
+        """执行热备（xtrabackup 全量）"""
+        if not self.instance.data_dir:
+            return {'success': False, 'error_message': '未配置实例数据目录'}
+
+        executor = RemoteExecutor(self.instance)
+        remote_root = self._remote_root()
+        backup_dir_name = f"hot_{self.instance.alias}_{timestamp}".replace(' ', '_')
+        remote_dir = f"{remote_root}/{backup_dir_name}"
+        archive_name = f"{backup_dir_name}.tar.gz" if compress else f"{backup_dir_name}.tar"
+        local_path = Path(storage_path) / archive_name
+
+        executor.run(f"mkdir -p {shlex.quote(remote_root)}")
+        executor.run(f"mkdir -p {shlex.quote(remote_dir)}")
+
+        cmd = self._build_xtrabackup_command(remote_dir)
+        code, _, err = executor.run(cmd, timeout=3600)
+        if code != 0:
+            return {'success': False, 'error_message': err or '热备失败'}
+
+        remote_archive = self._archive_remote_dir(executor, remote_dir, compress)
+        executor.download(remote_archive, local_path)
+        executor.run(f"rm -rf {shlex.quote(remote_dir)} {shlex.quote(remote_archive)}")
+
+        file_size_mb = local_path.stat().st_size / (1024 * 1024)
+        return {'success': True, 'file_path': str(local_path), 'file_size_mb': round(file_size_mb, 2)}
+
+    def _execute_incremental_backup(self, storage_path, timestamp, compress, base_backup):
+        """执行增量备份（xtrabackup 增量）"""
+        if not base_backup or not base_backup.file_path:
+            return {'success': False, 'error_message': '增量备份缺少基准备份'}
+        if not self.instance.data_dir:
+            return {'success': False, 'error_message': '未配置实例数据目录'}
+
+        executor = RemoteExecutor(self.instance)
+        remote_root = self._remote_root()
+        backup_dir_name = f"incremental_{self.instance.alias}_{timestamp}".replace(' ', '_')
+        remote_dir = f"{remote_root}/{backup_dir_name}"
+        archive_name = f"{backup_dir_name}.tar.gz" if compress else f"{backup_dir_name}.tar"
+        local_path = Path(storage_path) / archive_name
+
+        base_archive = Path(base_backup.file_path)
+        base_name = self._strip_archive_suffix(base_archive.name)
+        remote_base_archive = f"{remote_root}/{base_archive.name}"
+        remote_base_dir = f"{remote_root}/{base_name}"
+
+        executor.run(f"mkdir -p {shlex.quote(remote_root)}")
+        executor.upload(base_archive, remote_base_archive)
+        extract_flag = '-xzf' if base_archive.name.endswith('.tar.gz') else '-xf'
+        executor.run(
+            f"tar -C {shlex.quote(remote_root)} {extract_flag} "
+            f"{shlex.quote(remote_base_archive)}"
+        )
+        executor.run(f"mkdir -p {shlex.quote(remote_dir)}")
+
+        cmd = self._build_xtrabackup_command(remote_dir, incremental_base_dir=remote_base_dir)
+        code, _, err = executor.run(cmd, timeout=3600)
+        if code != 0:
+            return {'success': False, 'error_message': err or '增量备份失败'}
+
+        remote_archive = self._archive_remote_dir(executor, remote_dir, compress)
+        executor.download(remote_archive, local_path)
+        executor.run(
+            f"rm -rf {shlex.quote(remote_dir)} {shlex.quote(remote_archive)} "
+            f"{shlex.quote(remote_base_dir)} {shlex.quote(remote_base_archive)}"
+        )
+
+        file_size_mb = local_path.stat().st_size / (1024 * 1024)
+        return {'success': True, 'file_path': str(local_path), 'file_size_mb': round(file_size_mb, 2)}
+
+    def _execute_cold_backup(self, storage_path, timestamp, compress):
+        """执行冷备（停库复制数据目录）"""
+        if not self.instance.data_dir:
+            return {'success': False, 'error_message': '未配置实例数据目录'}
+
+        executor = RemoteExecutor(self.instance)
+        remote_root = self._remote_root()
+        backup_dir_name = f"cold_{self.instance.alias}_{timestamp}".replace(' ', '_')
+        archive_name = f"{backup_dir_name}.tar.gz" if compress else f"{backup_dir_name}.tar"
+        remote_archive = f"{remote_root}/{archive_name}"
+        local_path = Path(storage_path) / archive_name
+
+        if self.instance.deployment_type == 'docker':
+            stop_cmd = f"docker stop {shlex.quote(self.instance.docker_container_name)}"
+            start_cmd = f"docker start {shlex.quote(self.instance.docker_container_name)}"
+        else:
+            stop_cmd = f"sudo systemctl stop {shlex.quote(self.instance.mysql_service_name)}"
+            start_cmd = f"sudo systemctl start {shlex.quote(self.instance.mysql_service_name)}"
+
+        data_dir = Path(self.instance.data_dir)
+        parent_dir = str(data_dir.parent)
+        base_name = data_dir.name
+        tar_flag = '-czf' if compress else '-cf'
+        tar_cmd = (
+            f"tar -C {shlex.quote(parent_dir)} {tar_flag} "
+            f"{shlex.quote(remote_archive)} {shlex.quote(base_name)}"
+        )
+
+        executor.run(f"mkdir -p {shlex.quote(remote_root)}")
+        try:
+            code, _, err = executor.run(stop_cmd, timeout=600)
+            if code != 0:
+                return {'success': False, 'error_message': err or '停止 MySQL 失败'}
+
+            code, _, err = executor.run(tar_cmd, timeout=3600)
+            if code != 0:
+                return {'success': False, 'error_message': err or '冷备份打包失败'}
+        finally:
+            executor.run(start_cmd, timeout=600)
+
+        executor.download(remote_archive, local_path)
+        executor.run(f"rm -f {shlex.quote(remote_archive)}")
+
+        file_size_mb = local_path.stat().st_size / (1024 * 1024)
+        return {'success': True, 'file_path': str(local_path), 'file_size_mb': round(file_size_mb, 2)}
     
     def _compress_file(self, file_path):
         """
