@@ -3,6 +3,7 @@ MySQL 实例管理的 API 视图
 
 提供实例的 CRUD、连接测试、监控数据等功能。
 """
+from django.conf import settings
 from django.utils import timezone
 from django.db.models import Count, Sum
 from rest_framework import viewsets, status
@@ -89,6 +90,57 @@ class MySQLInstanceViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """创建实例时设置创建者"""
         serializer.save(created_by=self.request.user)
+
+    def _is_status_stale(self, instance) -> bool:
+        """判断实例状态是否过期需要刷新"""
+        if not instance.last_check_time:
+            return True
+        stale_seconds = getattr(settings, 'INSTANCE_STATUS_STALE_SECONDS', 120)
+        return (timezone.now() - instance.last_check_time).total_seconds() > stale_seconds
+
+    def _refresh_instance_status(self, instance) -> None:
+        """刷新实例状态（仅在状态过期时触发）"""
+        if not self._is_status_stale(instance):
+            return
+
+        is_healthy, message, info = HealthChecker.check_instance(instance)
+
+        if is_healthy:
+            instance.status = 'online'
+            if not instance.version and info.get('version'):
+                instance.version = info['version']
+        else:
+            msg = message.lower()
+            instance.status = 'offline' if 'timeout' in msg or 'connection refused' in msg else 'error'
+
+        instance.last_check_time = timezone.now()
+        instance.save(update_fields=['status', 'last_check_time', 'version'])
+
+    def _refresh_stale_statuses(self, instances) -> None:
+        """批量刷新过期状态"""
+        for instance in instances:
+            self._refresh_instance_status(instance)
+
+    def list(self, request, *args, **kwargs):
+        """列表查询时刷新过期实例状态，避免前端显示过期状态"""
+        queryset = self.filter_queryset(self.get_queryset())
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            self._refresh_stale_statuses(page)
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        self._refresh_stale_statuses(queryset)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+    def retrieve(self, request, *args, **kwargs):
+        """详情查询时刷新过期状态"""
+        instance = self.get_object()
+        self._refresh_instance_status(instance)
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
     
     @action(detail=False, methods=['post'], url_path='test-connection')
     def test_connection(self, request):

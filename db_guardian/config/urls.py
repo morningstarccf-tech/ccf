@@ -4,12 +4,15 @@ DB-Guardian 主路由配置
 """
 from django.contrib import admin
 from django.urls import path, include
+from django.views.generic import RedirectView
 from django.conf import settings
 from django.conf.urls.static import static
 
 urlpatterns = [
     # Django Admin
     path('admin/', admin.site.urls),
+    # 根路径重定向到 admin（使首页更友好）
+    path('', RedirectView.as_view(url='/admin/', permanent=False)),
     
     # API 路由
     path('api/auth/', include('apps.authentication.urls')),

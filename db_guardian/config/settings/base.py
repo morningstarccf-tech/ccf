@@ -108,6 +108,11 @@ CACHES = {
 # SQL 查询配置
 SQL_QUERY_TIMEOUT = config('SQL_QUERY_TIMEOUT', default=30, cast=int)  # 查询超时（秒）
 SQL_MAX_ROWS = config('SQL_MAX_ROWS', default=1000, cast=int)  # 最大返回行数
+INSTANCE_STATUS_STALE_SECONDS = config(
+    'INSTANCE_STATUS_STALE_SECONDS',
+    default=120,
+    cast=int
+)  # 实例状态过期阈值（秒）
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -275,7 +280,30 @@ CSRF_COOKIE_SAMESITE = 'Lax'
 # 密码加密密钥（生产环境必须更换）
 # 使用 Fernet 对称加密算法加密 MySQL 实例密码
 from cryptography.fernet import Fernet
-ENCRYPTION_KEY = config('ENCRYPTION_KEY', default=Fernet.generate_key().decode())
+
+
+def _load_or_create_encryption_key() -> str:
+    """加载或生成稳定的加密密钥（开发环境兜底用）。"""
+    key = config('ENCRYPTION_KEY', default='').strip()
+    if key:
+        return key
+
+    key_path = BASE_DIR / '.encryption_key'
+    if key_path.exists():
+        existing = key_path.read_text(encoding='utf-8').strip()
+        if existing:
+            return existing
+
+    key = Fernet.generate_key().decode()
+    try:
+        key_path.write_text(key, encoding='utf-8')
+    except OSError:
+        # 无法写入时仍返回生成的密钥，但下次启动需显式配置
+        pass
+    return key
+
+
+ENCRYPTION_KEY = _load_or_create_encryption_key()
 
 # 备份文件存储配置
 BACKUP_STORAGE_PATH = BASE_DIR / 'backups'

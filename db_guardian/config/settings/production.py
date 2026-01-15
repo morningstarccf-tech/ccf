@@ -50,6 +50,11 @@ DATABASES = {
     }
 }
 
+# Encryption key - 生产环境必须显式配置
+if not config('ENCRYPTION_KEY', default='').strip():
+    raise ValueError('ENCRYPTION_KEY must be set in production')
+ENCRYPTION_KEY = config('ENCRYPTION_KEY').strip()
+
 # Cache - 生产环境使用 Redis
 CACHES = {
     'default': {

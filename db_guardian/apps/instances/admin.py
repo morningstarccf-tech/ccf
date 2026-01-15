@@ -4,6 +4,7 @@ MySQL 实例管理的 Django Admin 配置
 提供实例、数据库、监控指标的后台管理界面。
 """
 from django.contrib import admin
+from django import forms
 from django.utils.html import format_html
 from django.urls import reverse
 from django.utils.safestring import mark_safe
@@ -21,6 +22,27 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
     ]
     list_filter = ['status', 'team', 'created_at']
     search_fields = ['alias', 'host', 'description']
+    # 使用自定义表单，密码字段通过 PasswordInput 输入，不在表单中回显已加密内容
+    class MySQLInstanceForm(forms.ModelForm):
+        password = forms.CharField(
+            label='密码',
+            required=False,
+            widget=forms.PasswordInput(render_value=False),
+            help_text='MySQL 连接密码（留空则不修改，创建时必填）'
+        )
+
+        class Meta:
+            model = MySQLInstance
+            fields = '__all__'
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            # 不将数据库中加密的密码回显到表单中
+            if self.instance and self.instance.pk:
+                self.fields['password'].initial = ''
+
+    form = MySQLInstanceForm
+
     readonly_fields = [
         'status', 'last_check_time', 'version',
         'created_by', 'created_at', 'updated_at',
@@ -32,7 +54,7 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
             'fields': ('alias', 'description', 'team', 'created_by')
         }),
         ('连接配置', {
-            'fields': ('host', 'port', 'username', 'password_info', 'charset')
+            'fields': ('host', 'port', 'username', 'password', 'charset')
         }),
         ('状态信息', {
             'fields': ('status', 'version', 'last_check_time')

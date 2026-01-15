@@ -134,8 +134,7 @@ class IsTeamAdmin(permissions.BasePermission):
                 user=request.user
             )
             # 检查角色是否有管理权限
-            # 这里可以根据实际需求检查特定权限
-            return membership.role.has_permission('manage_team')
+            return membership.role.has_permission('manage_team_members')
         except TeamMember.DoesNotExist:
             return False
 
