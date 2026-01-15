@@ -3,12 +3,13 @@ MySQL 实例管理的 Django Admin 配置
 
 提供实例、数据库、监控指标的后台管理界面。
 """
-from django.contrib import admin
+from django.contrib import admin, messages
 from django import forms
 from django.utils.html import format_html
 from django.urls import reverse
 from django.utils.safestring import mark_safe
 from apps.instances.models import MySQLInstance, Database, MonitoringMetrics
+from apps.instances.services import DatabaseSyncService
 
 
 @admin.register(MySQLInstance)
@@ -22,6 +23,7 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
     ]
     list_filter = ['status', 'team', 'created_at']
     search_fields = ['alias', 'host', 'description']
+    actions = ['sync_databases_action']
     # 使用自定义表单，密码字段通过 PasswordInput 输入，不在表单中回显已加密内容
     class MySQLInstanceForm(forms.ModelForm):
         password = forms.CharField(
@@ -142,6 +144,27 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
         if not change:
             obj.created_by = request.user
         super().save_model(request, obj, form, change)
+
+    @admin.action(description='同步数据库列表并刷新统计')
+    def sync_databases_action(self, request, queryset):
+        """从 MySQL 实例同步数据库列表"""
+        created_total = 0
+        updated_total = 0
+        for instance in queryset:
+            try:
+                result = DatabaseSyncService.sync_databases(
+                    instance,
+                    refresh_stats=True,
+                    include_system=False
+                )
+                created_total += result['created']
+                updated_total += result['updated']
+            except Exception as exc:
+                messages.error(request, f'{instance.alias} 同步失败: {exc}')
+        messages.success(
+            request,
+            f'同步完成，新增 {created_total} 个，更新 {updated_total} 个'
+        )
 
 
 class DatabaseInline(admin.TabularInline):

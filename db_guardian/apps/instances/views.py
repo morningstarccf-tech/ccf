@@ -23,7 +23,7 @@ from apps.instances.serializers import (
     MonitoringMetricsSerializer,
     DashboardSerializer,
 )
-from apps.instances.services import HealthChecker, MetricsCollector
+from apps.instances.services import HealthChecker, MetricsCollector, DatabaseSyncService
 from apps.authentication.permissions import IsTeamMember, IsTeamAdmin
 import pymysql
 import logging
@@ -384,20 +384,13 @@ class MySQLInstanceViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         refresh_stats = str(request.query_params.get('refresh_stats', '1')).lower() in ('1', 'true', 'yes')
         include_system = str(request.query_params.get('include_system', '')).lower() in ('1', 'true', 'yes')
-        system_schemas = {'information_schema', 'mysql', 'performance_schema', 'sys'}
 
         try:
-            connection = instance.get_connection()
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    SELECT
-                        SCHEMA_NAME AS name,
-                        DEFAULT_CHARACTER_SET_NAME AS charset,
-                        DEFAULT_COLLATION_NAME AS collation
-                    FROM information_schema.SCHEMATA
-                """)
-                schemas = cursor.fetchall()
-            connection.close()
+            result = DatabaseSyncService.sync_databases(
+                instance,
+                refresh_stats=refresh_stats,
+                include_system=include_system
+            )
         except Exception as exc:
             logger.exception(f"Failed to sync databases for {instance.alias}: {exc}")
             return Response({
@@ -405,47 +398,14 @@ class MySQLInstanceViewSet(viewsets.ModelViewSet):
                 'message': f'同步数据库列表失败: {exc}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        created_count = 0
-        updated_count = 0
-        synced = []
-
-        for schema in schemas:
-            name = (schema.get('name') or '').strip()
-            if not name:
-                continue
-            if not include_system and name in system_schemas:
-                continue
-
-            defaults = {
-                'charset': schema.get('charset') or instance.charset,
-                'collation': schema.get('collation') or 'utf8mb4_unicode_ci',
-            }
-            database, created = Database.objects.update_or_create(
-                instance=instance,
-                name=name,
-                defaults=defaults
-            )
-            if created:
-                created_count += 1
-            else:
-                updated_count += 1
-
-            if refresh_stats:
-                try:
-                    database.update_statistics()
-                except Exception as exc:
-                    logger.warning(f"Failed to refresh stats for {database}: {exc}")
-
-            synced.append(name)
-
         return Response({
             'success': True,
             'message': '同步完成',
-            'created': created_count,
-            'updated': updated_count,
-            'total': len(synced),
+            'created': result['created'],
+            'updated': result['updated'],
+            'total': result['total'],
             'refresh_stats': refresh_stats,
-            'databases': synced
+            'databases': result['databases']
         })
     
     @action(detail=True, methods=['post'], url_path='backup')

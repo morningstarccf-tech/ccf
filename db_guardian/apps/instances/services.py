@@ -389,5 +389,67 @@ class MetricsCollector:
             return False
 
 
+class DatabaseSyncService:
+    """同步实例数据库列表并刷新统计信息。"""
+
+    @staticmethod
+    def sync_databases(instance, refresh_stats: bool = True, include_system: bool = False) -> Dict[str, Any]:
+        system_schemas = {'information_schema', 'mysql', 'performance_schema', 'sys'}
+
+        connection = instance.get_connection()
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT
+                    SCHEMA_NAME AS name,
+                    DEFAULT_CHARACTER_SET_NAME AS charset,
+                    DEFAULT_COLLATION_NAME AS collation
+                FROM information_schema.SCHEMATA
+            """)
+            schemas = cursor.fetchall()
+        connection.close()
+
+        from apps.instances.models import Database
+
+        created_count = 0
+        updated_count = 0
+        synced = []
+
+        for schema in schemas:
+            name = (schema.get('name') or '').strip()
+            if not name:
+                continue
+            if not include_system and name in system_schemas:
+                continue
+
+            defaults = {
+                'charset': schema.get('charset') or instance.charset,
+                'collation': schema.get('collation') or 'utf8mb4_unicode_ci',
+            }
+            database, created = Database.objects.update_or_create(
+                instance=instance,
+                name=name,
+                defaults=defaults
+            )
+            if created:
+                created_count += 1
+            else:
+                updated_count += 1
+
+            if refresh_stats:
+                try:
+                    database.update_statistics()
+                except Exception as exc:
+                    logger.warning(f"Failed to refresh stats for {database}: {exc}")
+
+            synced.append(name)
+
+        return {
+            'created': created_count,
+            'updated': updated_count,
+            'total': len(synced),
+            'databases': synced,
+        }
+
+
 # 全局连接池管理器实例
 connection_pool_manager = ConnectionPoolManager()
