@@ -78,7 +78,12 @@ EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@db-guardian.com')
 
 # Logging - 生产环境日志配置
-LOGGING['handlers']['file']['filename'] = '/var/log/db_guardian/app.log'
+from pathlib import Path
+LOG_FILE_PATH = Path(
+    config('LOG_FILE_PATH', default=str(BASE_DIR / 'logs' / 'db_guardian.log'))
+)
+LOG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+LOGGING['handlers']['file']['filename'] = str(LOG_FILE_PATH)
 LOGGING['root']['level'] = 'INFO'
 LOGGING['loggers']['apps']['level'] = 'INFO'
 
