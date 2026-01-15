@@ -8,6 +8,7 @@ from django import forms
 from django.utils.html import format_html
 from django.urls import reverse
 from django.utils.safestring import mark_safe
+from django.http import HttpResponseRedirect
 from apps.instances.models import MySQLInstance, Database, MonitoringMetrics
 from apps.instances.services import DatabaseSyncService
 
@@ -24,6 +25,7 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
     list_filter = ['status', 'team', 'created_at']
     search_fields = ['alias', 'host', 'description']
     actions = ['sync_databases_action']
+    change_form_template = 'admin/instances/mysqlinstance/change_form.html'
     # 使用自定义表单，密码字段通过 PasswordInput 输入，不在表单中回显已加密内容
     class MySQLInstanceForm(forms.ModelForm):
         password = forms.CharField(
@@ -144,6 +146,24 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
         if not change:
             obj.created_by = request.user
         super().save_model(request, obj, form, change)
+
+    def response_change(self, request, obj):
+        """处理同步按钮的自定义操作"""
+        if "_sync_databases" in request.POST:
+            try:
+                result = DatabaseSyncService.sync_databases(
+                    obj,
+                    refresh_stats=True,
+                    include_system=False
+                )
+                messages.success(
+                    request,
+                    f'同步完成，新增 {result["created"]} 个，更新 {result["updated"]} 个'
+                )
+            except Exception as exc:
+                messages.error(request, f'{obj.alias} 同步失败: {exc}')
+            return HttpResponseRedirect(request.path)
+        return super().response_change(request, obj)
 
     @admin.action(description='同步数据库列表并刷新统计')
     def sync_databases_action(self, request, queryset):
