@@ -226,6 +226,7 @@ class BackupRecordSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'instance', 'strategy', 'database_name', 'backup_type',
             'backup_type_display', 'status', 'status_display', 'file_path',
+            'remote_path', 'object_storage_path',
             'file_size_mb', 'start_time', 'end_time', 'duration_seconds',
             'error_message', 'created_by', 'created_at', 'download_url',
             'base_backup_id'
@@ -394,6 +395,7 @@ class BackupRecordListSerializer(serializers.ModelSerializer):
             'id', 'instance_alias', 'strategy_name', 'database_name',
             'backup_type', 'backup_type_display', 'status', 'status_display',
             'file_size_mb', 'start_time', 'end_time', 'created_at',
+            'remote_path', 'object_storage_path',
             'base_backup_id'
         ]
         read_only_fields = '__all__'

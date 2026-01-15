@@ -114,6 +114,8 @@ def execute_backup_task(self, strategy_id=None, instance_id=None,
         backup_record.end_time = timezone.now()
         backup_record.file_path = result['file_path']
         backup_record.file_size_mb = result['file_size_mb']
+        backup_record.remote_path = result.get('remote_path', '')
+        backup_record.object_storage_path = result.get('object_storage_path', '')
         backup_record.save()
         
         logger.info(f"备份任务完成: 记录ID={backup_record.id}")
@@ -126,7 +128,9 @@ def execute_backup_task(self, strategy_id=None, instance_id=None,
             'success': True,
             'backup_id': backup_record.id,
             'file_path': result['file_path'],
-            'file_size_mb': result['file_size_mb']
+            'file_size_mb': result['file_size_mb'],
+            'remote_path': result.get('remote_path', ''),
+            'object_storage_path': result.get('object_storage_path', '')
         }
         
     except Exception as e:

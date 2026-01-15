@@ -87,7 +87,7 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
         ('部署与备份配置', {
             'fields': (
                 'deployment_type', 'docker_container_name', 'mysql_service_name',
-                'data_dir', 'xtrabackup_bin'
+                'data_dir', 'remote_backup_root', 'xtrabackup_bin'
             )
         }),
         ('远程执行（SSH）', {

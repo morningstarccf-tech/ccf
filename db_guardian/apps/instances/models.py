@@ -134,6 +134,13 @@ class MySQLInstance(models.Model):
         help_text=_('MySQL 数据目录（用于冷备/热备物理备份）')
     )
 
+    remote_backup_root = models.CharField(
+        _('远程备份目录'),
+        max_length=500,
+        blank=True,
+        help_text=_('备份在 MySQL 服务器保留的目录（需配置 SSH）')
+    )
+
     ssh_host = models.CharField(
         _('SSH 主机'),
         max_length=255,

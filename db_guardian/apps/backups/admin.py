@@ -180,8 +180,9 @@ class BackupRecordAdmin(admin.ModelAdmin):
     
     readonly_fields = [
         'instance', 'strategy', 'database_name', 'backup_type',
-        'status', 'file_path', 'file_size_mb', 'start_time',
-        'end_time', 'error_message', 'created_by', 'created_at'
+        'status', 'file_path', 'remote_path', 'object_storage_path',
+        'file_size_mb', 'start_time', 'end_time',
+        'error_message', 'created_by', 'created_at'
     ]
     
     fieldsets = (
@@ -192,7 +193,7 @@ class BackupRecordAdmin(admin.ModelAdmin):
             'fields': ('status', 'start_time', 'end_time', 'error_message')
         }),
         ('文件信息', {
-            'fields': ('file_path', 'file_size_mb')
+            'fields': ('file_path', 'remote_path', 'object_storage_path', 'file_size_mb')
         }),
         ('元数据', {
             'fields': ('created_by', 'created_at'),

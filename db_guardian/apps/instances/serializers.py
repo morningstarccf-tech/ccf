@@ -27,7 +27,7 @@ class MySQLInstanceSerializer(serializers.ModelSerializer):
             'team', 'team_name', 'description', 'status', 'status_display',
             'last_check_time', 'version', 'charset',
             'deployment_type', 'docker_container_name', 'mysql_service_name',
-            'data_dir', 'ssh_host', 'ssh_port', 'ssh_user', 'ssh_key_path',
+            'data_dir', 'remote_backup_root', 'ssh_host', 'ssh_port', 'ssh_user', 'ssh_key_path',
             'xtrabackup_bin',
             'created_by', 'created_by_username',
             'created_at', 'updated_at', 'database_count'
@@ -68,7 +68,7 @@ class MySQLInstanceCreateSerializer(serializers.ModelSerializer):
             'alias', 'host', 'port', 'username', 'password',
             'team', 'description', 'charset',
             'deployment_type', 'docker_container_name', 'mysql_service_name',
-            'data_dir', 'ssh_host', 'ssh_port', 'ssh_user', 'ssh_password',
+            'data_dir', 'remote_backup_root', 'ssh_host', 'ssh_port', 'ssh_user', 'ssh_password',
             'ssh_key_path', 'xtrabackup_bin'
         ]
     
@@ -146,7 +146,7 @@ class MySQLInstanceUpdateSerializer(serializers.ModelSerializer):
             'alias', 'host', 'port', 'username', 'password',
             'description', 'charset',
             'deployment_type', 'docker_container_name', 'mysql_service_name',
-            'data_dir', 'ssh_host', 'ssh_port', 'ssh_user', 'ssh_password',
+            'data_dir', 'remote_backup_root', 'ssh_host', 'ssh_port', 'ssh_user', 'ssh_password',
             'ssh_key_path', 'xtrabackup_bin'
         ]
     

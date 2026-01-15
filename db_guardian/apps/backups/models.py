@@ -211,6 +211,20 @@ class BackupRecord(models.Model):
         blank=True,
         help_text=_('备份文件的完整路径')
     )
+
+    remote_path = models.CharField(
+        _('远程路径'),
+        max_length=500,
+        blank=True,
+        help_text=_('远程服务器备份路径')
+    )
+
+    object_storage_path = models.CharField(
+        _('对象存储路径'),
+        max_length=500,
+        blank=True,
+        help_text=_('对象存储路径（如 OSS）')
+    )
     
     file_size_mb = models.FloatField(
         _('文件大小(MB)'),

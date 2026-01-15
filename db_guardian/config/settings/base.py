@@ -119,6 +119,20 @@ DATABASE_STATS_STALE_SECONDS = config(
     cast=int
 )  # 数据库统计信息过期阈值（秒）
 
+# Backup storage
+BACKUP_STORAGE_PATH = config(
+    'BACKUP_STORAGE_PATH',
+    default=str(BASE_DIR / 'backups')
+)
+
+# Aliyun OSS (optional)
+OSS_ENABLED = config('OSS_ENABLED', default=False, cast=bool)
+OSS_ENDPOINT = config('OSS_ENDPOINT', default='')
+OSS_ACCESS_KEY_ID = config('OSS_ACCESS_KEY_ID', default='')
+OSS_ACCESS_KEY_SECRET = config('OSS_ACCESS_KEY_SECRET', default='')
+OSS_BUCKET = config('OSS_BUCKET', default='')
+OSS_PREFIX = config('OSS_PREFIX', default='db-guardian')
+
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 AUTH_PASSWORD_VALIDATORS = [
