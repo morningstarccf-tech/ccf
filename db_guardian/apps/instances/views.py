@@ -411,6 +411,37 @@ class DatabaseViewSet(viewsets.ModelViewSet):
     search_fields = ['name']
     ordering_fields = ['name', 'size_mb', 'created_at']
     ordering = ['name']
+
+    def _is_stats_stale(self, database) -> bool:
+        """判断统计信息是否过期"""
+        stale_seconds = getattr(settings, 'DATABASE_STATS_STALE_SECONDS', 300)
+        if not database.updated_at:
+            return True
+        return (timezone.now() - database.updated_at).total_seconds() > stale_seconds
+
+    def _refresh_statistics(self, databases, force: bool = False) -> None:
+        """刷新数据库统计信息"""
+        for database in databases:
+            if force or self._is_stats_stale(database):
+                try:
+                    database.update_statistics()
+                except Exception as exc:
+                    logger.warning(f"Failed to refresh stats for {database}: {exc}")
+
+    def list(self, request, *args, **kwargs):
+        """可选刷新数据库统计信息"""
+        queryset = self.filter_queryset(self.get_queryset())
+        refresh = str(request.query_params.get('refresh', '')).lower() in ('1', 'true', 'yes')
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            self._refresh_statistics(page, force=refresh)
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        self._refresh_statistics(queryset, force=refresh)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
     
     def get_queryset(self):
         """根据实例ID过滤数据库"""

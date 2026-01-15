@@ -113,6 +113,11 @@ INSTANCE_STATUS_STALE_SECONDS = config(
     default=120,
     cast=int
 )  # 实例状态过期阈值（秒）
+DATABASE_STATS_STALE_SECONDS = config(
+    'DATABASE_STATS_STALE_SECONDS',
+    default=300,
+    cast=int
+)  # 数据库统计信息过期阈值（秒）
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators

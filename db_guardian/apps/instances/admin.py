@@ -219,16 +219,21 @@ class MonitoringMetricsAdmin(admin.ModelAdmin):
     
     def _usage_badge(self, value):
         """使用率徽章"""
-        if value >= 90:
+        try:
+            numeric = float(value) if value is not None else 0.0
+        except (TypeError, ValueError):
+            numeric = 0.0
+
+        if numeric >= 90:
             color = 'red'
-        elif value >= 70:
+        elif numeric >= 70:
             color = 'orange'
         else:
             color = 'green'
         
         return format_html(
             '<span style="color: {};">{:.1f}%</span>',
-            color, value
+            color, numeric
         )
 
 
