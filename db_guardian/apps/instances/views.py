@@ -414,6 +414,8 @@ class DatabaseViewSet(viewsets.ModelViewSet):
 
     def _is_stats_stale(self, database) -> bool:
         """判断统计信息是否过期"""
+        if database.table_count == 0 and database.size_mb == 0:
+            return True
         stale_seconds = getattr(settings, 'DATABASE_STATS_STALE_SECONDS', 300)
         if not database.updated_at:
             return True
