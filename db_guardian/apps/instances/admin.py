@@ -231,9 +231,10 @@ class MonitoringMetricsAdmin(admin.ModelAdmin):
         else:
             color = 'green'
         
+        value_display = f"{numeric:.1f}%"
         return format_html(
-            '<span style="color: {};">{:.1f}%</span>',
-            color, numeric
+            '<span style="color: {};">{}</span>',
+            color, value_display
         )
 
 
