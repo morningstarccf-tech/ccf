@@ -12,6 +12,7 @@ from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from apps.instances.models import MySQLInstance, Database, MonitoringMetrics
 from apps.instances.services import DatabaseSyncService
+from apps.backups.tasks import execute_backup_task
 
 
 @admin.register(MySQLInstance)
@@ -25,7 +26,7 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
     ]
     list_filter = ['status', 'team', 'created_at']
     search_fields = ['alias', 'host', 'description']
-    actions = ['sync_databases_action']
+    actions = ['sync_databases_action', 'trigger_backup_action']
     change_form_template = 'admin/instances/mysqlinstance/change_form.html'
     # 使用自定义表单，密码字段通过 PasswordInput 输入，不在表单中回显已加密内容
     class MySQLInstanceForm(forms.ModelForm):
@@ -164,6 +165,21 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
             except Exception as exc:
                 messages.error(request, f'{obj.alias} 同步失败: {exc}')
             return HttpResponseRedirect(request.path)
+        if "_run_backup_now" in request.POST:
+            try:
+                task = execute_backup_task.delay(
+                    instance_id=obj.id,
+                    user_id=request.user.id,
+                    backup_type='full',
+                    compress=True
+                )
+                messages.success(
+                    request,
+                    f'已创建备份任务，任务ID: {task.id}'
+                )
+            except Exception as exc:
+                messages.error(request, f'立即备份失败: {exc}')
+            return HttpResponseRedirect(request.path)
         return super().response_change(request, obj)
 
     @admin.action(description='同步数据库列表并刷新统计')
@@ -186,6 +202,24 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
             request,
             f'同步完成，新增 {created_total} 个，更新 {updated_total} 个'
         )
+
+    @admin.action(description='立即执行备份')
+    def trigger_backup_action(self, request, queryset):
+        """批量触发备份任务"""
+        created_count = 0
+        for instance in queryset:
+            try:
+                execute_backup_task.delay(
+                    instance_id=instance.id,
+                    user_id=request.user.id,
+                    backup_type='full',
+                    compress=True
+                )
+                created_count += 1
+            except Exception as exc:
+                messages.error(request, f'{instance.alias} 触发失败: {exc}')
+        if created_count:
+            messages.success(request, f'已创建 {created_count} 个备份任务')
 
 
 class DatabaseInline(admin.TabularInline):

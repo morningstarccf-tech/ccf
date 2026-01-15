@@ -8,6 +8,8 @@ from django.contrib import admin, messages
 from django.http import HttpResponseRedirect
 from django import forms
 from django.utils.html import format_html
+from django.urls import reverse
+from pathlib import Path
 from apps.backups.models import BackupStrategy, BackupRecord
 from apps.backups.tasks import execute_backup_task
 
@@ -164,7 +166,8 @@ class BackupRecordAdmin(admin.ModelAdmin):
     
     list_display = [
         'id', 'instance', 'database_name', 'backup_type',
-        'status_badge', 'file_size_mb', 'start_time', 'duration'
+        'status_badge', 'file_size_mb', 'start_time', 'duration',
+        'download_link'
     ]
     
     list_filter = [
@@ -234,3 +237,14 @@ class BackupRecordAdmin(admin.ModelAdmin):
                 return f"{seconds/3600:.1f} 小时"
         return "-"
     duration.short_description = '耗时'
+
+    def download_link(self, obj):
+        """显示下载链接"""
+        if obj.status != 'success' or not obj.file_path:
+            return '-'
+        file_path = Path(obj.file_path)
+        if not file_path.exists():
+            return '-'
+        url = f"/api/backups/records/{obj.id}/download/"
+        return format_html('<a href="{}">下载</a>', url)
+    download_link.short_description = '下载'

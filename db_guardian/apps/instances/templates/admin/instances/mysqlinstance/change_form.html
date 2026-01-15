@@ -5,5 +5,6 @@
   {{ block.super }}
   <div class="submit-row">
     <input type="submit" value="{% trans '同步数据库并刷新统计' %}" name="_sync_databases">
+    <input type="submit" value="{% trans '立即执行备份' %}" name="_run_backup_now">
   </div>
 {% endblock %}
