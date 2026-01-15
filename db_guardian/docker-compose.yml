@@ -47,6 +47,9 @@ services:
       - "8000:8000"
     environment:
       - DJANGO_ENV=production
+      - SECRET_KEY=${SECRET_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=db_guardian
@@ -77,6 +80,8 @@ services:
       - media_volume:/app/media
     environment:
       - DJANGO_ENV=production
+      - SECRET_KEY=${SECRET_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=db_guardian
@@ -99,6 +104,8 @@ services:
       - .:/app
     environment:
       - DJANGO_ENV=production
+      - SECRET_KEY=${SECRET_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=db_guardian
