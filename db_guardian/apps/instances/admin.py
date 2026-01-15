@@ -6,9 +6,10 @@ MySQL 实例管理的 Django Admin 配置
 from django.contrib import admin, messages
 from django import forms
 from django.utils.html import format_html
-from django.urls import reverse
+from django.urls import reverse, path
 from django.utils.safestring import mark_safe
 from django.http import HttpResponseRedirect
+from django.shortcuts import get_object_or_404
 from apps.instances.models import MySQLInstance, Database, MonitoringMetrics
 from apps.instances.services import DatabaseSyncService
 
@@ -206,6 +207,8 @@ class DatabaseAdmin(admin.ModelAdmin):
     list_filter = ['instance', 'charset', 'created_at']
     search_fields = ['name', 'instance__alias']
     readonly_fields = ['size_mb', 'table_count', 'last_backup_time', 'created_at', 'updated_at']
+    actions = ['sync_related_instances_action']
+    change_list_template = 'admin/instances/database/change_list.html'
     
     fieldsets = (
         ('基本信息', {
@@ -231,6 +234,65 @@ class DatabaseAdmin(admin.ModelAdmin):
             return f"{obj.size_mb / 1024:.2f} GB"
     size_display.short_description = '大小'
     size_display.admin_order_field = 'size_mb'
+
+    def get_urls(self):
+        """自定义同步按钮路由"""
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                'sync-instance/',
+                self.admin_site.admin_view(self.sync_instance_view),
+                name='instances_database_sync_instance'
+            ),
+        ]
+        return custom_urls + urls
+
+    def sync_instance_view(self, request):
+        """同步筛选实例的数据库列表"""
+        instance_id = request.GET.get('instance_id')
+        if not instance_id:
+            messages.error(request, '请先通过筛选选择实例')
+            return HttpResponseRedirect(reverse('admin:instances_database_changelist'))
+
+        instance = get_object_or_404(MySQLInstance, pk=instance_id)
+        try:
+            result = DatabaseSyncService.sync_databases(
+                instance,
+                refresh_stats=True,
+                include_system=False
+            )
+            messages.success(
+                request,
+                f'{instance.alias} 同步完成，新增 {result["created"]} 个，更新 {result["updated"]} 个'
+            )
+        except Exception as exc:
+            messages.error(request, f'{instance.alias} 同步失败: {exc}')
+
+        return HttpResponseRedirect(
+            reverse('admin:instances_database_changelist') + f'?instance__id__exact={instance_id}'
+        )
+
+    @admin.action(description='同步所属实例数据库并刷新统计')
+    def sync_related_instances_action(self, request, queryset):
+        """批量同步所选数据库所属的实例"""
+        instances = {db.instance for db in queryset.select_related('instance')}
+        created_total = 0
+        updated_total = 0
+        for instance in instances:
+            try:
+                result = DatabaseSyncService.sync_databases(
+                    instance,
+                    refresh_stats=True,
+                    include_system=False
+                )
+                created_total += result['created']
+                updated_total += result['updated']
+            except Exception as exc:
+                messages.error(request, f'{instance.alias} 同步失败: {exc}')
+        messages.success(
+            request,
+            f'同步完成，新增 {created_total} 个，更新 {updated_total} 个'
+        )
 
 
 @admin.register(MonitoringMetrics)

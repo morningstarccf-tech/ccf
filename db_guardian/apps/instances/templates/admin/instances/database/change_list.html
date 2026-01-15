@@ -1,0 +1,13 @@
+{% extends "admin/change_list.html" %}
+{% load i18n %}
+
+{% block object-tools %}
+  {{ block.super }}
+  {% if cl.params.instance__id__exact %}
+    <li>
+      <a href="{% url 'admin:instances_database_sync_instance' %}?instance_id={{ cl.params.instance__id__exact }}" class="addlink">
+        {% trans '同步当前实例并刷新统计' %}
+      </a>
+    </li>
+  {% endif %}
+{% endblock %}
