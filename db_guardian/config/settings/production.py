@@ -88,8 +88,12 @@ LOGGING['root']['level'] = 'INFO'
 LOGGING['loggers']['apps']['level'] = 'INFO'
 
 # Static files - 生产环境使用 WhiteNoise 或 云存储
-STATIC_ROOT = '/var/www/db_guardian/staticfiles'
-MEDIA_ROOT = '/var/www/db_guardian/media'
+STATIC_ROOT = Path(
+    config('STATIC_ROOT', default=str(BASE_DIR / 'staticfiles'))
+)
+MEDIA_ROOT = Path(
+    config('MEDIA_ROOT', default=str(BASE_DIR / 'media'))
+)
 
 # 如果使用 WhiteNoise (推荐用于 Docker 部署)
 MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
