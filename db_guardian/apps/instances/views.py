@@ -121,6 +121,24 @@ class MySQLInstanceViewSet(viewsets.ModelViewSet):
         for instance in instances:
             self._refresh_instance_status(instance)
 
+    def _is_db_stats_stale(self, database) -> bool:
+        """判断数据库统计信息是否过期"""
+        if database.table_count == 0 and database.size_mb == 0:
+            return True
+        stale_seconds = getattr(settings, 'DATABASE_STATS_STALE_SECONDS', 300)
+        if not database.updated_at:
+            return True
+        return (timezone.now() - database.updated_at).total_seconds() > stale_seconds
+
+    def _refresh_db_stats(self, databases, force: bool = False) -> None:
+        """刷新数据库统计信息"""
+        for database in databases:
+            if force or self._is_db_stats_stale(database):
+                try:
+                    database.update_statistics()
+                except Exception as exc:
+                    logger.warning(f"Failed to refresh stats for {database}: {exc}")
+
     def list(self, request, *args, **kwargs):
         """列表查询时刷新过期实例状态，避免前端显示过期状态"""
         queryset = self.filter_queryset(self.get_queryset())
@@ -263,6 +281,8 @@ class MySQLInstanceViewSet(viewsets.ModelViewSet):
         """
         instance = self.get_object()
         databases = instance.databases.all().order_by('name')
+        refresh = str(request.query_params.get('refresh', '')).lower() in ('1', 'true', 'yes')
+        self._refresh_db_stats(databases, force=refresh)
         serializer = DatabaseSerializer(databases, many=True)
         return Response(serializer.data)
     
