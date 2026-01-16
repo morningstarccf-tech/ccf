@@ -248,7 +248,11 @@ class BackupExecutor:
                 'error_message': error_msg
             }
     
-    def _build_mysqldump_command(self, database_name, output_file):
+    def _get_dump_binary(self) -> str | None:
+        """获取可用的导出命令（mysqldump 或 mariadb-dump）。"""
+        return shutil.which('mysqldump') or shutil.which('mariadb-dump')
+
+    def _build_mysqldump_command(self, database_name, output_file, dump_bin: str):
         """
         构建 mysqldump 命令
         
@@ -264,7 +268,7 @@ class BackupExecutor:
         
         # 基础命令
         cmd_parts = [
-            'mysqldump',
+            dump_bin,
             f'-h {self.instance.host}',
             f'-P {self.instance.port}',
             f'-u {self.instance.username}',
@@ -295,8 +299,15 @@ class BackupExecutor:
 
     def _execute_logical_backup(self, database_name, compress, storage_path, filename):
         """执行逻辑备份（mysqldump）"""
+        dump_bin = self._get_dump_binary()
+        if not dump_bin:
+            return {
+                'success': False,
+                'error_message': 'mysqldump 或 mariadb-dump 未安装'
+            }
+
         file_path = storage_path / filename
-        dump_cmd = self._build_mysqldump_command(database_name, str(file_path))
+        dump_cmd = self._build_mysqldump_command(database_name, str(file_path), dump_bin)
 
         logger.info(f"开始逻辑备份: {self.instance.alias}")
         result = subprocess.run(
