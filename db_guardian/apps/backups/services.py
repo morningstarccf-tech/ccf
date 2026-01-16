@@ -283,7 +283,6 @@ class BackupExecutor:
             '--single-transaction',  # 对于InnoDB，保证一致性备份
             '--quick',  # 快速导出，不缓冲到内存
             '--lock-tables=false',  # 不锁表
-            '--set-gtid-purged=OFF',  # 不包含GTID信息
         ])
         
         # 指定数据库
