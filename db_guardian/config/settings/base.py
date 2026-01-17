@@ -332,8 +332,10 @@ def _load_or_create_encryption_key() -> str:
 ENCRYPTION_KEY = _load_or_create_encryption_key()
 
 # 备份文件存储配置
-BACKUP_STORAGE_PATH = BASE_DIR / 'backups'
-BACKUP_STORAGE_PATH.mkdir(exist_ok=True)
+BACKUP_STORAGE_PATH = Path(BACKUP_STORAGE_PATH)
+if BACKUP_STORAGE_PATH.exists() and not BACKUP_STORAGE_PATH.is_dir():
+    BACKUP_STORAGE_PATH = BASE_DIR / 'backups'
+BACKUP_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
 
 # 备份文件最大保留数量（防止磁盘占满）
 BACKUP_MAX_FILES_PER_INSTANCE = config('BACKUP_MAX_FILES_PER_INSTANCE', default=50, cast=int)
