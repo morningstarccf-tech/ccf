@@ -55,6 +55,20 @@
       margin-top: 6px;
       color: #666;
     }
+    .terminal-controls {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      margin-top: 6px;
+      color: #555;
+      flex-wrap: wrap;
+    }
+    .terminal-controls label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
   </style>
 
   <h1 class="sql-terminal-title">SQL 终端</h1>
@@ -109,6 +123,17 @@
         <textarea id="terminal-input" class="terminal-input" rows="3" placeholder="输入 SQL，回车执行，Shift+Enter 换行"></textarea>
       </div>
     </div>
+    <div class="terminal-controls">
+      <span>输出格式：</span>
+      <label>
+        <input type="radio" name="terminal-output-mode" value="table" checked>
+        表格输出
+      </label>
+      <label>
+        <input type="radio" name="terminal-output-mode" value="json">
+        JSON 输出
+      </label>
+    </div>
     <div class="terminal-hint">
       快捷键：Enter 执行，Shift+Enter 换行，↑/↓ 切换历史命令
     </div>
@@ -122,6 +147,7 @@
       const input = document.getElementById('terminal-input');
       const executeUrl = "{{ execute_url }}";
       const csrfToken = form.querySelector('[name=csrfmiddlewaretoken]').value;
+      const outputModeInputs = document.querySelectorAll('[name=terminal-output-mode]');
       const history = [];
       let historyIndex = -1;
 
@@ -182,7 +208,37 @@
         return lines.join('\n');
       }
 
-      function renderResult(result) {
+      function getOutputMode() {
+        const checked = Array.from(outputModeInputs).find((input) => input.checked);
+        return checked ? checked.value : 'table';
+      }
+
+      function renderResultJson(result) {
+        if (!result || !result.success) {
+          appendLine(`ERROR: ${result && result.message ? result.message : '执行失败'}`);
+          if (result && result.errors) {
+            appendBlock(JSON.stringify(result.errors, null, 2));
+          }
+          return;
+        }
+
+        appendLine(`OK (${result.sql_type}) rows=${result.rows_affected} time=${result.execution_time_ms}ms`);
+        if (result.columns && result.columns.length) {
+          appendLine(`Columns: ${result.columns.join(', ')}`);
+        }
+        if (result.data && result.data.length) {
+          const sliced = result.data.slice(0, 50);
+          appendBlock(JSON.stringify(sliced, null, 2));
+          if (result.data.length > 50) {
+            appendLine('... 已截断，仅显示前 50 行');
+          }
+        }
+        if (result.warnings && result.warnings.length) {
+          result.warnings.forEach((warning) => appendLine(`Warning: ${warning}`));
+        }
+      }
+
+      function renderResultTable(result) {
         if (!result || !result.success) {
           appendLine(`ERROR: ${result && result.message ? result.message : '执行失败'}`);
           if (result && result.errors) {
@@ -209,6 +265,14 @@
         if (result.warnings && result.warnings.length) {
           result.warnings.forEach((warning) => appendLine(`Warning: ${warning}`));
         }
+      }
+
+      function renderResult(result) {
+        if (getOutputMode() === 'json') {
+          renderResultJson(result);
+          return;
+        }
+        renderResultTable(result);
       }
 
       async function executeSql(sql) {
