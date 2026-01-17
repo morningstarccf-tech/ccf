@@ -382,6 +382,40 @@ class RestoreSerializer(serializers.Serializer):
         return value
 
 
+class RestoreUploadSerializer(serializers.Serializer):
+    """
+    上传备份文件恢复序列化器
+    """
+
+    instance_id = serializers.IntegerField(required=True)
+    backup_file = serializers.FileField(required=True)
+    target_database = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text='目标数据库名称，为空则恢复到原数据库'
+    )
+    confirm = serializers.BooleanField(
+        required=True,
+        help_text='确认执行恢复操作（必须为 true）'
+    )
+
+    def validate_confirm(self, value):
+        if not value:
+            raise serializers.ValidationError(
+                "恢复操作需要确认，请设置 confirm 为 true"
+            )
+        return value
+
+    def validate_target_database(self, value):
+        if value:
+            import re
+            if not re.match(r'^[a-zA-Z0-9_]+$', value):
+                raise serializers.ValidationError(
+                    "数据库名称只能包含字母、数字和下划线"
+                )
+        return value
+
+
 class BackupRecordListSerializer(serializers.ModelSerializer):
     """
     备份记录列表序列化器

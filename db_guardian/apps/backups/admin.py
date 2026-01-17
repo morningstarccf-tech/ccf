@@ -6,6 +6,7 @@
 import json
 import datetime
 import logging
+from uuid import uuid4
 from django.contrib import admin, messages
 from django.http import HttpResponseRedirect, FileResponse
 from django.conf import settings
@@ -26,6 +27,7 @@ from apps.backups.models import (
 from apps.backups.tasks import execute_backup_task, execute_oneoff_backup_task
 from apps.backups.services import StrategyManager, RemoteExecutor, ObjectStorageUploader
 from apps.backups.services import RestoreExecutor
+from apps.instances.models import MySQLInstance
 
 logger = logging.getLogger(__name__)
 try:
@@ -888,6 +890,22 @@ class BackupRestoreBoardAdmin(admin.ModelAdmin):
 
     change_list_template = 'admin/backups/backuprestoreboard/change_list.html'
 
+    class RestoreUploadForm(forms.Form):
+        instance = forms.ModelChoiceField(
+            label='MySQL 实例',
+            queryset=MySQLInstance.objects.all()
+        )
+        backup_file = forms.FileField(label='备份文件')
+        target_database = forms.CharField(
+            label='目标数据库',
+            required=False,
+            help_text='为空则恢复到原数据库'
+        )
+        confirm = forms.BooleanField(
+            label='确认恢复',
+            required=True
+        )
+
     def has_add_permission(self, request):
         return False
 
@@ -896,6 +914,17 @@ class BackupRestoreBoardAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                'upload/',
+                self.admin_site.admin_view(self.upload_view),
+                name='backups_backuprecord_restore_upload'
+            )
+        ]
+        return custom_urls + urls
 
     def changelist_view(self, request, extra_context=None):
         records = BackupRecord.objects.filter(
@@ -906,10 +935,53 @@ class BackupRestoreBoardAdmin(admin.ModelAdmin):
             **self.admin_site.each_context(request),
             'title': '备份恢复',
             'records': records,
+            'upload_form': self.RestoreUploadForm(),
+            'upload_url': reverse('admin:backups_backuprecord_restore_upload'),
         }
         if extra_context:
             context.update(extra_context)
         return TemplateResponse(request, self.change_list_template, context)
+
+    def upload_view(self, request):
+        if request.method != 'POST':
+            return HttpResponseRedirect(reverse('admin:backups_backuprestoreboard_changelist'))
+
+        form = self.RestoreUploadForm(request.POST, request.FILES)
+        if not form.is_valid():
+            return self.changelist_view(request, extra_context={'upload_form': form})
+
+        instance = form.cleaned_data['instance']
+        backup_file = form.cleaned_data['backup_file']
+        target_db = form.cleaned_data.get('target_database') or None
+
+        backup_root = Path(getattr(settings, 'BACKUP_STORAGE_PATH', settings.BASE_DIR / 'backups'))
+        temp_dir = backup_root / 'uploads'
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = Path(backup_file.name).name
+        temp_path = temp_dir / f"restore_{uuid4().hex}_{safe_name}"
+
+        try:
+            with open(temp_path, 'wb') as f_out:
+                for chunk in backup_file.chunks():
+                    f_out.write(chunk)
+
+            executor = RestoreExecutor(instance)
+            result = executor.execute_restore(str(temp_path), target_db)
+            if result.get('success'):
+                messages.success(request, '恢复完成')
+            else:
+                messages.error(request, result.get('error_message', '恢复失败'))
+        except Exception as exc:
+            logger.exception(f"上传恢复失败: {exc}")
+            messages.error(request, f"恢复失败: {exc}")
+        finally:
+            try:
+                if temp_path.exists():
+                    temp_path.unlink()
+            except Exception as exc:
+                logger.warning(f"清理上传文件失败: {exc}")
+
+        return HttpResponseRedirect(reverse('admin:backups_backuprestoreboard_changelist'))
 
 
 for model in (PeriodicTask, CrontabSchedule, IntervalSchedule, SolarSchedule, ClockedSchedule):

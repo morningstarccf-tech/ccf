@@ -5,16 +5,19 @@
 """
 from django.utils import timezone
 from django.http import FileResponse
+from django.conf import settings
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.authentication import SessionAuthentication
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from pathlib import Path
 import logging
+from uuid import uuid4
 
 from apps.backups.models import BackupStrategy, BackupRecord
 from apps.backups.serializers import (
@@ -24,12 +27,65 @@ from apps.backups.serializers import (
     BackupRecordListSerializer,
     ManualBackupSerializer,
     RestoreSerializer,
+    RestoreUploadSerializer,
 )
-from apps.backups.services import StrategyManager, RestoreExecutor
+from apps.backups.services import (
+    StrategyManager,
+    RestoreExecutor,
+    RemoteExecutor,
+    ObjectStorageUploader
+)
 from apps.backups.tasks import execute_backup_task, verify_backup_integrity
 from apps.authentication.permissions import IsTeamMember, IsTeamAdmin
+from apps.instances.models import MySQLInstance
 
 logger = logging.getLogger(__name__)
+
+
+def _infer_backup_filename(record):
+    for path_value in [record.file_path, record.remote_path, record.object_storage_path]:
+        if not path_value:
+            continue
+        if path_value.startswith('oss://'):
+            stripped = path_value[len('oss://'):]
+            _, _, key = stripped.partition('/')
+            if key:
+                return Path(key).name
+        return Path(path_value).name
+    return f"backup_{record.id}.sql"
+
+
+def _prepare_backup_download_path(record):
+    if record.file_path:
+        file_path = Path(record.file_path)
+        if file_path.exists():
+            return file_path
+
+    backup_root = Path(getattr(settings, 'BACKUP_STORAGE_PATH', settings.BASE_DIR / 'backups'))
+    temp_dir = backup_root / 'tmp'
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    filename = _infer_backup_filename(record)
+    temp_path = temp_dir / filename
+
+    if record.remote_path:
+        executor = RemoteExecutor(record.instance)
+        try:
+            executor.download(record.remote_path, temp_path)
+            if temp_path.exists():
+                return temp_path
+        except Exception as exc:
+            logger.warning(f"远程备份下载失败: {exc}")
+
+    if record.object_storage_path:
+        uploader = ObjectStorageUploader()
+        try:
+            uploader.download(record.object_storage_path, temp_path)
+            if temp_path.exists():
+                return temp_path
+        except Exception as exc:
+            logger.warning(f"OSS 备份下载失败: {exc}")
+
+    return None
 
 
 class BackupStrategyViewSet(viewsets.ModelViewSet):
@@ -221,7 +277,7 @@ class BackupRecordViewSet(viewsets.ModelViewSet):
     
     def get_permissions(self):
         """根据动作设置不同的权限"""
-        if self.action in ['destroy', 'restore']:
+        if self.action in ['destroy', 'restore', 'restore_upload']:
             # 删除和恢复需要管理员权限
             return [IsAuthenticated(), IsTeamAdmin()]
         return super().get_permissions()
@@ -265,18 +321,11 @@ class BackupRecordViewSet(viewsets.ModelViewSet):
                 'message': '只能下载成功的备份文件'
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        if not record.file_path:
+        file_path = _prepare_backup_download_path(record)
+        if not file_path:
             return Response({
                 'success': False,
-                'message': '备份文件路径为空'
-            }, status=status.HTTP_404_NOT_FOUND)
-        
-        file_path = Path(record.file_path)
-        
-        if not file_path.exists():
-            return Response({
-                'success': False,
-                'message': '备份文件不存在'
+                'message': '备份文件不存在或无法下载'
             }, status=status.HTTP_404_NOT_FOUND)
         
         # 返回文件
@@ -325,14 +374,21 @@ class BackupRecordViewSet(viewsets.ModelViewSet):
         
         target_database = serializer.validated_data.get('target_database')
         
+        restore_path = _prepare_backup_download_path(record)
+        if not restore_path:
+            return Response({
+                'success': False,
+                'message': '备份文件不存在或无法下载'
+            }, status=status.HTTP_404_NOT_FOUND)
+
         # 执行恢复
         try:
             executor = RestoreExecutor(record.instance)
             result = executor.execute_restore(
-                record.file_path,
+                str(restore_path),
                 target_database
             )
-            
+
             if result['success']:
                 logger.info(f"恢复成功: 备份ID={record.id}, 用户={request.user.username}")
                 return Response({
@@ -351,6 +407,88 @@ class BackupRecordViewSet(viewsets.ModelViewSet):
                 'success': False,
                 'message': f'恢复失败: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        finally:
+            try:
+                if restore_path and (
+                    not record.file_path
+                    or Path(record.file_path).resolve() != restore_path.resolve()
+                ):
+                    if restore_path.exists():
+                        restore_path.unlink()
+            except Exception as exc:
+                logger.warning(f"清理临时恢复文件失败: {exc}")
+
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='restore-upload',
+        parser_classes=[MultiPartParser, FormParser]
+    )
+    def restore_upload(self, request):
+        """
+        上传备份文件并执行恢复
+
+        POST /records/restore-upload/
+        FormData: instance_id, backup_file, target_database(optional), confirm
+        """
+        serializer = RestoreUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        instance_id = serializer.validated_data['instance_id']
+        backup_file = serializer.validated_data['backup_file']
+        target_database = serializer.validated_data.get('target_database')
+
+        try:
+            instance = MySQLInstance.objects.get(id=instance_id)
+        except MySQLInstance.DoesNotExist:
+            return Response({
+                'success': False,
+                'message': 'MySQL 实例不存在'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        if not request.user.is_superuser:
+            admin_checker = IsTeamAdmin()
+            if not admin_checker.has_object_permission(request, self, instance):
+                return Response({
+                    'success': False,
+                    'message': '无权限恢复该实例'
+                }, status=status.HTTP_403_FORBIDDEN)
+
+        backup_root = Path(getattr(settings, 'BACKUP_STORAGE_PATH', settings.BASE_DIR / 'backups'))
+        temp_dir = backup_root / 'uploads'
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = Path(backup_file.name).name
+        temp_path = temp_dir / f"restore_{uuid4().hex}_{safe_name}"
+
+        try:
+            with open(temp_path, 'wb') as f_out:
+                for chunk in backup_file.chunks():
+                    f_out.write(chunk)
+
+            executor = RestoreExecutor(instance)
+            result = executor.execute_restore(str(temp_path), target_database)
+            if result.get('success'):
+                return Response({
+                    'success': True,
+                    'message': '数据恢复成功'
+                })
+
+            return Response({
+                'success': False,
+                'message': result.get('error_message', '恢复失败')
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as exc:
+            logger.exception(f"上传恢复失败: {exc}")
+            return Response({
+                'success': False,
+                'message': f'恢复失败: {str(exc)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        finally:
+            try:
+                if temp_path.exists():
+                    temp_path.unlink()
+            except Exception as exc:
+                logger.warning(f"清理上传文件失败: {exc}")
     
     @action(detail=True, methods=['post'], url_path='verify')
     def verify(self, request, pk=None):

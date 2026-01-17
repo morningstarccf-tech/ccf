@@ -3,6 +3,23 @@
 
 {% block content %}
   <style>
+    .restore-upload {
+      background: #fff;
+      border: 1px solid #e0e0e0;
+      padding: 12px;
+      margin-bottom: 16px;
+    }
+    .restore-upload .field-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .restore-upload label {
+      min-width: 90px;
+      font-weight: 600;
+    }
     .restore-table {
       width: 100%;
       border-collapse: collapse;
@@ -20,6 +37,37 @@
   </style>
 
   <p class="help">当前仅支持从“全量备份”执行在线恢复，热备/冷备/增量备份需按物理恢复流程。</p>
+
+  <div class="restore-upload">
+    <form method="post" enctype="multipart/form-data" action="{{ upload_url }}">
+      {% csrf_token %}
+      {% if upload_form.non_field_errors %}
+        <div class="errors">{{ upload_form.non_field_errors }}</div>
+      {% endif %}
+      <div class="field-row">
+        <label for="{{ upload_form.instance.id_for_label }}">实例</label>
+        {{ upload_form.instance }}
+        {{ upload_form.instance.errors }}
+      </div>
+      <div class="field-row">
+        <label for="{{ upload_form.backup_file.id_for_label }}">备份文件</label>
+        {{ upload_form.backup_file }}
+        {{ upload_form.backup_file.errors }}
+      </div>
+      <div class="field-row">
+        <label for="{{ upload_form.target_database.id_for_label }}">目标数据库</label>
+        {{ upload_form.target_database }}
+        {{ upload_form.target_database.errors }}
+        <span class="help">{{ upload_form.target_database.help_text }}</span>
+      </div>
+      <div class="field-row">
+        {{ upload_form.confirm }}
+        <label for="{{ upload_form.confirm.id_for_label }}">确认恢复</label>
+        {{ upload_form.confirm.errors }}
+      </div>
+      <button class="button" type="submit">上传并恢复</button>
+    </form>
+  </div>
 
   <table class="restore-table">
     <thead>
