@@ -1,16 +1,22 @@
 {% extends "admin/change_form.html" %}
 {% load i18n %}
 
+{% block after_field_sets %}
+  {{ block.super }}
+  <div id="default-storage-hint" class="help">
+    默认存储位置为容器内 `/app/backups`。如需修改，请调整 `docker-compose.yml` 的目录映射。
+  </div>
+{% endblock %}
+
 {% block submit_buttons_bottom %}
   {{ block.super }}
   <div class="submit-row">
-    <input type="submit" value="{% trans '立即执行备份' %}" name="_run_backup_now">
-    {% if original %}
-      {% if original.is_enabled %}
-        <input type="submit" value="{% trans '禁用策略' %}" name="_disable_strategy">
-      {% else %}
-        <input type="submit" value="{% trans '启用策略' %}" name="_enable_strategy">
-      {% endif %}
-    {% endif %}
+    <button
+      type="button"
+      id="test-remote-connection"
+      data-test-url="{% url 'admin:backups_backupstrategy_test_storage' %}"
+    >
+      测试连通性
+    </button>
   </div>
 {% endblock %}

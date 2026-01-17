@@ -33,6 +33,7 @@ from apps.backups.services import (
     StrategyManager,
     RestoreExecutor,
     RemoteExecutor,
+    RemoteStorageClient,
     ObjectStorageUploader
 )
 from apps.backups.tasks import execute_backup_task, verify_backup_integrity
@@ -68,16 +69,40 @@ def _prepare_backup_download_path(record):
     temp_path = temp_dir / filename
 
     if record.remote_path:
-        executor = RemoteExecutor(record.instance)
         try:
-            executor.download(record.remote_path, temp_path)
+            if record.remote_protocol:
+                client = RemoteStorageClient(
+                    protocol=record.remote_protocol,
+                    host=record.remote_host,
+                    port=record.remote_port,
+                    user=record.remote_user,
+                    password=record.get_decrypted_remote_password(),
+                    key_path=record.remote_key_path
+                )
+                client.download(record.remote_path, temp_path)
+            else:
+                executor = RemoteExecutor(record.instance)
+                executor.download(record.remote_path, temp_path)
             if temp_path.exists():
                 return temp_path
         except Exception as exc:
             logger.warning(f"远程备份下载失败: {exc}")
 
     if record.object_storage_path:
-        uploader = ObjectStorageUploader()
+        oss_config = None
+        if record.strategy and (
+            record.strategy.oss_endpoint
+            or record.strategy.oss_access_key_id
+            or record.strategy.oss_bucket
+        ):
+            oss_config = {
+                'endpoint': record.strategy.oss_endpoint,
+                'access_key_id': record.strategy.oss_access_key_id,
+                'access_key_secret': record.strategy.get_decrypted_oss_access_key_secret(),
+                'bucket': record.strategy.oss_bucket,
+                'prefix': record.strategy.oss_prefix
+            }
+        uploader = ObjectStorageUploader(config=oss_config)
         try:
             uploader.download(record.object_storage_path, temp_path)
             if temp_path.exists():

@@ -25,8 +25,12 @@ class BackupStrategySerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'instance', 'databases', 'cron_expression',
             'backup_type', 'backup_type_display', 'retention_days',
-            'is_enabled', 'storage_path', 'compress', 'created_by',
-            'created_at', 'updated_at'
+            'is_enabled', 'storage_mode', 'storage_path', 'compress',
+            'store_local', 'store_remote', 'store_oss',
+            'remote_storage_path', 'remote_protocol', 'remote_host',
+            'remote_port', 'remote_user', 'remote_key_path',
+            'oss_endpoint', 'oss_access_key_id', 'oss_bucket', 'oss_prefix',
+            'created_by', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_by', 'created_at', 'updated_at']
 
@@ -39,13 +43,20 @@ class BackupStrategyCreateSerializer(serializers.ModelSerializer):
     """
     
     instance_id = serializers.IntegerField(write_only=True, help_text='MySQL 实例 ID')
+    remote_password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    oss_access_key_secret = serializers.CharField(write_only=True, required=False, allow_blank=True)
     
     class Meta:
         model = BackupStrategy
         fields = [
             'name', 'instance_id', 'databases', 'cron_expression',
             'backup_type', 'retention_days', 'is_enabled',
-            'storage_path', 'compress'
+            'storage_mode', 'storage_path', 'compress',
+            'store_local', 'store_remote', 'store_oss',
+            'remote_storage_path', 'remote_protocol', 'remote_host',
+            'remote_port', 'remote_user', 'remote_password', 'remote_key_path',
+            'oss_endpoint', 'oss_access_key_id', 'oss_access_key_secret',
+            'oss_bucket', 'oss_prefix'
         ]
     
     def validate_cron_expression(self, value):
@@ -117,6 +128,7 @@ class BackupStrategyCreateSerializer(serializers.ModelSerializer):
 
         instance_id = attrs.get('instance_id')
         backup_type = attrs.get('backup_type')
+        storage_mode = attrs.get('storage_mode')
         if not instance_id or not backup_type:
             return attrs
 
@@ -144,6 +156,46 @@ class BackupStrategyCreateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     'mysql_service_name': '冷备份（系统服务）必须配置服务名称'
                 })
+
+        if storage_mode:
+            attrs['store_local'] = storage_mode == 'default'
+            attrs['store_remote'] = storage_mode in ['mysql_host', 'remote_server']
+            attrs['store_oss'] = storage_mode == 'oss'
+            if storage_mode == 'default':
+                attrs['storage_path'] = ''
+            elif storage_mode == 'mysql_host':
+                if not attrs.get('remote_storage_path'):
+                    raise serializers.ValidationError({
+                        'remote_storage_path': '请填写 MySQL 服务器存储路径'
+                    })
+                if not instance.ssh_host or not instance.ssh_user:
+                    raise serializers.ValidationError({
+                        'ssh_host': 'MySQL 服务器路径需要在实例中配置 SSH 连接信息'
+                    })
+            elif storage_mode == 'remote_server':
+                if not attrs.get('remote_storage_path'):
+                    raise serializers.ValidationError({
+                        'remote_storage_path': '请填写远程服务器存储路径'
+                    })
+                if not attrs.get('remote_protocol'):
+                    raise serializers.ValidationError({
+                        'remote_protocol': '请选择远程协议'
+                    })
+                if not attrs.get('remote_host'):
+                    raise serializers.ValidationError({
+                        'remote_host': '请填写远程主机'
+                    })
+            elif storage_mode == 'oss':
+                missing = [
+                    key for key in [
+                        'oss_endpoint', 'oss_access_key_id', 'oss_access_key_secret',
+                        'oss_bucket', 'oss_prefix'
+                    ] if not attrs.get(key)
+                ]
+                if missing:
+                    raise serializers.ValidationError({
+                        'oss_endpoint': '请填写云存储配置和路径'
+                    })
 
         return attrs
     
@@ -261,7 +313,7 @@ class BackupRecordSerializer(serializers.ModelSerializer):
         Returns:
             str: 下载 URL
         """
-        if obj.status == 'success' and obj.file_path:
+        if obj.status == 'success' and (obj.file_path or obj.remote_path or obj.object_storage_path):
             request = self.context.get('request')
             if request:
                 return request.build_absolute_uri(

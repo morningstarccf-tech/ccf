@@ -5,5 +5,19 @@
   {{ block.super }}
   <div class="submit-row">
     <input type="submit" value="{% trans '立即执行' %}" name="_run_now">
+    <button
+      type="button"
+      id="test-remote-connection"
+      data-test-url="{% url 'admin:backups_backuponeofftask_test_storage' %}"
+    >
+      测试连通性
+    </button>
+  </div>
+{% endblock %}
+
+{% block after_field_sets %}
+  {{ block.super }}
+  <div id="default-storage-hint" class="help">
+    默认存储位置为容器内 `/app/backups`。如需修改，请调整 `docker-compose.yml` 的目录映射。
   </div>
 {% endblock %}

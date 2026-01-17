@@ -25,15 +25,21 @@ def _execute_backup_core(
     store_local=True,
     store_remote=False,
     store_oss=False,
-    remote_storage_path=None
+    remote_storage_path=None,
+    remote_config_override=None,
+    oss_config_override=None,
+    storage_mode=None
 ):
     from apps.backups.models import BackupStrategy, BackupRecord
-    from apps.instances.models import MySQLInstance
+    from apps.instances.models import MySQLInstance, PasswordEncryptor
     from apps.backups.services import BackupExecutor
 
     backup_record = None
 
     # 1. 获取实例和策略
+    remote_config = remote_config_override
+    oss_config = oss_config_override
+
     if strategy_id:
         strategy = BackupStrategy.objects.select_related('instance').get(id=strategy_id)
         instance = strategy.instance
@@ -45,6 +51,23 @@ def _execute_backup_core(
         store_remote = strategy.store_remote
         store_oss = strategy.store_oss
         remote_storage_path = strategy.remote_storage_path or None
+        if store_remote and strategy.storage_mode == 'remote_server':
+            remote_config = {
+                'protocol': strategy.remote_protocol,
+                'host': strategy.remote_host,
+                'port': strategy.remote_port,
+                'user': strategy.remote_user,
+                'password': strategy.get_decrypted_remote_password(),
+                'key_path': strategy.remote_key_path,
+            }
+        if store_oss:
+            oss_config = {
+                'endpoint': strategy.oss_endpoint,
+                'access_key_id': strategy.oss_access_key_id,
+                'access_key_secret': strategy.get_decrypted_oss_access_key_secret(),
+                'bucket': strategy.oss_bucket,
+                'prefix': strategy.oss_prefix,
+            }
     elif instance_id:
         instance = MySQLInstance.objects.get(id=instance_id)
         strategy = None
@@ -52,6 +75,10 @@ def _execute_backup_core(
         compress = True if compress is None else compress
         storage_path = storage_path
         backup_type = backup_type or 'full'
+        if store_remote and storage_mode == 'remote_server' and remote_config is None:
+            remote_config = remote_config_override
+        if store_oss and oss_config is None:
+            oss_config = oss_config_override
     else:
         raise ValueError("必须提供 strategy_id 或 instance_id")
 
@@ -66,6 +93,10 @@ def _execute_backup_core(
             raise Exception("增量备份需要先有成功的热备/增量备份作为基准")
 
     # 2. 创建备份记录
+    encrypted_remote_password = ''
+    if remote_config and remote_config.get('password'):
+        encrypted_remote_password = PasswordEncryptor.encrypt(remote_config.get('password'))
+
     backup_record = BackupRecord.objects.create(
         instance=instance,
         strategy=strategy,
@@ -76,7 +107,13 @@ def _execute_backup_core(
         created_by_id=user_id,
         base_backup=base_backup,
         remote_path='',
-        object_storage_path=''
+        object_storage_path='',
+        remote_protocol=remote_config.get('protocol') if remote_config else '',
+        remote_host=remote_config.get('host') if remote_config else '',
+        remote_port=remote_config.get('port') if remote_config else None,
+        remote_user=remote_config.get('user') if remote_config else '',
+        remote_password=encrypted_remote_password,
+        remote_key_path=remote_config.get('key_path') if remote_config else ''
     )
 
     logger.info(f"开始备份任务: 记录ID={backup_record.id}, 实例={instance.alias}")
@@ -96,7 +133,9 @@ def _execute_backup_core(
                 store_local=store_local,
                 store_remote=store_remote,
                 store_oss=store_oss,
-                remote_storage_path=remote_storage_path
+                remote_storage_path=remote_storage_path,
+                remote_config=remote_config,
+                oss_config=oss_config
             )
 
             if not result['success']:
@@ -112,7 +151,9 @@ def _execute_backup_core(
             store_local=store_local,
             store_remote=store_remote,
             store_oss=store_oss,
-            remote_storage_path=remote_storage_path
+            remote_storage_path=remote_storage_path,
+            remote_config=remote_config,
+            oss_config=oss_config
         )
 
         if not result['success']:
@@ -208,6 +249,26 @@ def execute_oneoff_backup_task(self, task_id):
 
     backup_record = None
     try:
+        remote_config_override = None
+        oss_config_override = None
+        if task.store_remote and task.storage_mode == 'remote_server':
+            remote_config_override = {
+                'protocol': task.remote_protocol,
+                'host': task.remote_host,
+                'port': task.remote_port,
+                'user': task.remote_user,
+                'password': task.get_decrypted_remote_password(),
+                'key_path': task.remote_key_path,
+            }
+        if task.store_oss:
+            oss_config_override = {
+                'endpoint': task.oss_endpoint,
+                'access_key_id': task.oss_access_key_id,
+                'access_key_secret': task.get_decrypted_oss_access_key_secret(),
+                'bucket': task.oss_bucket,
+                'prefix': task.oss_prefix,
+            }
+
         backup_record, result = _execute_backup_core(
             instance_id=task.instance_id,
             databases=task.databases or None,
@@ -218,7 +279,10 @@ def execute_oneoff_backup_task(self, task_id):
             store_local=task.store_local,
             store_remote=task.store_remote,
             store_oss=task.store_oss,
-            remote_storage_path=task.remote_storage_path or None
+            remote_storage_path=task.remote_storage_path or None,
+            remote_config_override=remote_config_override,
+            oss_config_override=oss_config_override,
+            storage_mode=task.storage_mode
         )
         task.status = 'success'
         task.finished_at = timezone.now()

@@ -8,7 +8,7 @@ import datetime
 import logging
 from uuid import uuid4
 from django.contrib import admin, messages
-from django.http import HttpResponseRedirect, FileResponse
+from django.http import HttpResponseRedirect, FileResponse, JsonResponse
 from django.conf import settings
 from django.template.response import TemplateResponse
 from django import forms
@@ -25,8 +25,13 @@ from apps.backups.models import (
     BackupRestoreBoard
 )
 from apps.backups.tasks import execute_backup_task, execute_oneoff_backup_task
-from apps.backups.services import StrategyManager, RemoteExecutor, ObjectStorageUploader
-from apps.backups.services import RestoreExecutor
+from apps.backups.services import (
+    StrategyManager,
+    RemoteExecutor,
+    RemoteStorageClient,
+    ObjectStorageUploader,
+    RestoreExecutor
+)
 from apps.instances.models import MySQLInstance
 
 logger = logging.getLogger(__name__)
@@ -45,6 +50,51 @@ except Exception:
     SolarSchedule = None
     ClockedSchedule = None
 
+
+def _parse_int(value, default=None):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _test_storage_connection(storage_target, instance, data):
+    if storage_target == 'default':
+        return False, '默认存储无需测试'
+    if storage_target == 'mysql_host':
+        if not (instance and instance.ssh_host and instance.ssh_user):
+            return False, '实例未配置 SSH 连接信息'
+        executor = RemoteExecutor(instance)
+        code, _, err = executor.run('echo ok', timeout=10)
+        return (code == 0, err or 'ok')
+    if storage_target == 'remote_server':
+        protocol = data.get('remote_protocol')
+        host = data.get('remote_host')
+        port = _parse_int(data.get('remote_port'))
+        user = data.get('remote_user')
+        password = data.get('remote_password')
+        key_path = data.get('remote_key_path')
+        client = RemoteStorageClient(
+            protocol=protocol,
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            key_path=key_path
+        )
+        return client.test()
+    if storage_target == 'oss':
+        config = {
+            'endpoint': data.get('oss_endpoint'),
+            'access_key_id': data.get('oss_access_key_id'),
+            'access_key_secret': data.get('oss_access_key_secret'),
+            'bucket': data.get('oss_bucket'),
+            'prefix': data.get('oss_prefix')
+        }
+        uploader = ObjectStorageUploader(config=config)
+        return uploader.test_connection()
+    return False, '未知存储类型'
+
 @admin.register(BackupStrategy)
 class BackupStrategyAdmin(admin.ModelAdmin):
     """
@@ -59,11 +109,12 @@ class BackupStrategyAdmin(admin.ModelAdmin):
         storage_target = forms.ChoiceField(
             label='存储位置',
             choices=[
-                ('local', '本地路径'),
-                ('remote', '远程服务器路径'),
+                ('default', '默认存储（/app/backups）'),
+                ('mysql_host', 'MySQL 服务器路径'),
+                ('remote_server', '远程服务器路径'),
                 ('oss', '云存储（OSS）'),
             ],
-            initial='local'
+            initial='default'
         )
         store_local = forms.BooleanField(
             label='本地保存',
@@ -77,6 +128,16 @@ class BackupStrategyAdmin(admin.ModelAdmin):
         store_oss = forms.BooleanField(
             label='云存储保存',
             required=False
+        )
+        remote_password = forms.CharField(
+            label='远程密码',
+            required=False,
+            widget=forms.PasswordInput(render_value=False)
+        )
+        oss_access_key_secret = forms.CharField(
+            label='OSS AccessKey Secret',
+            required=False,
+            widget=forms.PasswordInput(render_value=False)
         )
         databases = forms.CharField(
             label='数据库列表',
@@ -131,6 +192,9 @@ class BackupStrategyAdmin(admin.ModelAdmin):
             model = BackupStrategy
             fields = '__all__'
 
+        class Media:
+            js = ('backups/storage_settings.js',)
+
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             if self.instance and self.instance.pk and self.instance.databases:
@@ -141,18 +205,28 @@ class BackupStrategyAdmin(admin.ModelAdmin):
             self.fields['store_local'].widget = forms.HiddenInput()
             self.fields['store_remote'].widget = forms.HiddenInput()
             self.fields['store_oss'].widget = forms.HiddenInput()
+            if 'storage_path' in self.fields:
+                self.fields['storage_path'].widget = forms.HiddenInput()
+            if 'storage_mode' in self.fields:
+                self.fields['storage_mode'].widget = forms.HiddenInput()
+            if 'remote_password' in self.fields:
+                self.fields['remote_password'].help_text = '留空则不修改'
+            if 'oss_access_key_secret' in self.fields:
+                self.fields['oss_access_key_secret'].help_text = '留空则不修改'
             self._apply_storage_target_initial()
             self._apply_schedule_initial()
 
         def _apply_storage_target_initial(self):
             if not self.instance:
                 return
-            if self.instance.store_remote:
-                self.initial['storage_target'] = 'remote'
+            if self.instance.storage_mode:
+                self.initial['storage_target'] = self.instance.storage_mode
+            elif self.instance.store_remote:
+                self.initial['storage_target'] = 'mysql_host'
             elif self.instance.store_oss:
                 self.initial['storage_target'] = 'oss'
             else:
-                self.initial['storage_target'] = 'local'
+                self.initial['storage_target'] = 'default'
 
         def _apply_schedule_initial(self):
             cron_expr = self.instance.cron_expression if self.instance else None
@@ -251,17 +325,72 @@ class BackupStrategyAdmin(admin.ModelAdmin):
             databases = cleaned_data.get('databases')
             remote_storage_path = cleaned_data.get('remote_storage_path')
             instance = cleaned_data.get('instance')
+            remote_protocol = cleaned_data.get('remote_protocol')
+            remote_host = cleaned_data.get('remote_host')
+            remote_port = cleaned_data.get('remote_port')
+            remote_user = cleaned_data.get('remote_user')
+            remote_password = cleaned_data.get('remote_password')
+            remote_key_path = cleaned_data.get('remote_key_path')
+            oss_endpoint = cleaned_data.get('oss_endpoint')
+            oss_access_key_id = cleaned_data.get('oss_access_key_id')
+            oss_access_key_secret = cleaned_data.get('oss_access_key_secret')
+            oss_bucket = cleaned_data.get('oss_bucket')
+            oss_prefix = cleaned_data.get('oss_prefix')
 
-            store_local = storage_target == 'local'
-            store_remote = storage_target == 'remote'
+            if not remote_password and self.instance and self.instance.remote_password:
+                cleaned_data['remote_password'] = self.instance.remote_password
+            if not oss_access_key_secret and self.instance and self.instance.oss_access_key_secret:
+                cleaned_data['oss_access_key_secret'] = self.instance.oss_access_key_secret
+
+            store_local = storage_target == 'default'
+            store_remote = storage_target in ['mysql_host', 'remote_server']
             store_oss = storage_target == 'oss'
             cleaned_data['store_local'] = store_local
             cleaned_data['store_remote'] = store_remote
             cleaned_data['store_oss'] = store_oss
+            cleaned_data['storage_mode'] = storage_target or 'default'
 
-            if store_remote and not remote_storage_path:
-                if not (instance and instance.remote_backup_root):
-                    self.add_error('remote_storage_path', '请填写远程存储路径或在实例中配置远程备份目录')
+            if storage_target == 'default':
+                cleaned_data['storage_path'] = ''
+            elif storage_target == 'mysql_host':
+                if not remote_storage_path:
+                    self.add_error('remote_storage_path', '请填写 MySQL 服务器存储路径')
+                if not (instance and instance.ssh_host and instance.ssh_user):
+                    self.add_error('instance', 'MySQL 服务器路径需要在实例中配置 SSH 连接信息')
+            elif storage_target == 'remote_server':
+                if not remote_storage_path:
+                    self.add_error('remote_storage_path', '请填写远程服务器存储路径')
+                if not remote_protocol:
+                    self.add_error('remote_protocol', '请选择远程协议')
+                if not remote_host:
+                    self.add_error('remote_host', '请填写远程主机')
+                if remote_protocol == 'ssh':
+                    if not remote_user:
+                        self.add_error('remote_user', '请填写 SSH 用户')
+                    if not (remote_password or remote_key_path):
+                        self.add_error('remote_password', '请填写 SSH 密码或密钥路径')
+                    cleaned_data['remote_port'] = remote_port or 22
+                elif remote_protocol == 'ftp':
+                    if not remote_user:
+                        self.add_error('remote_user', '请填写 FTP 用户')
+                    if not remote_password:
+                        self.add_error('remote_password', '请填写 FTP 密码')
+                    cleaned_data['remote_port'] = remote_port or 21
+                elif remote_protocol == 'http':
+                    cleaned_data['remote_port'] = remote_port or 80
+                else:
+                    self.add_error('remote_protocol', '不支持的远程协议')
+            elif storage_target == 'oss':
+                if not oss_endpoint:
+                    self.add_error('oss_endpoint', '请填写 OSS Endpoint')
+                if not oss_access_key_id:
+                    self.add_error('oss_access_key_id', '请填写 OSS AccessKey')
+                if not oss_access_key_secret:
+                    self.add_error('oss_access_key_secret', '请填写 OSS AccessKey Secret')
+                if not oss_bucket:
+                    self.add_error('oss_bucket', '请填写 OSS Bucket')
+                if not oss_prefix:
+                    self.add_error('oss_prefix', '请填写 OSS 路径')
 
             if backup_type in ['hot', 'cold', 'incremental'] and databases:
                 self.add_error('databases', '热备/冷备/增量备份不支持指定数据库列表')
@@ -308,9 +437,20 @@ class BackupStrategyAdmin(admin.ModelAdmin):
         }),
         ('存储设置', {
             'fields': (
-                'storage_path',
+                'storage_mode',
                 'storage_target',
                 'remote_storage_path',
+                'remote_protocol',
+                'remote_host',
+                'remote_port',
+                'remote_user',
+                'remote_password',
+                'remote_key_path',
+                'oss_endpoint',
+                'oss_access_key_id',
+                'oss_access_key_secret',
+                'oss_bucket',
+                'oss_prefix',
                 'is_enabled'
             )
         }),
@@ -382,6 +522,28 @@ class BackupStrategyAdmin(admin.ModelAdmin):
             return HttpResponseRedirect(request.path)
         return super().response_change(request, obj)
 
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                'test-storage/',
+                self.admin_site.admin_view(self.test_storage_view),
+                name='backups_backupstrategy_test_storage'
+            )
+        ]
+        return custom_urls + urls
+
+    def test_storage_view(self, request):
+        if request.method != 'POST':
+            return JsonResponse({'success': False, 'message': '仅支持 POST'}, status=405)
+        storage_target = request.POST.get('storage_target') or 'default'
+        instance_id = request.POST.get('instance')
+        instance = None
+        if instance_id:
+            instance = MySQLInstance.objects.filter(id=instance_id).first()
+        success, message = _test_storage_connection(storage_target, instance, request.POST)
+        return JsonResponse({'success': success, 'message': message})
+
     @admin.action(description='立即执行备份')
     def trigger_backup_action(self, request, queryset):
         """批量触发备份任务"""
@@ -439,6 +601,8 @@ class BackupRecordAdmin(admin.ModelAdmin):
     readonly_fields = [
         'instance', 'strategy', 'database_name', 'backup_type',
         'status', 'file_path', 'remote_path', 'object_storage_path',
+        'remote_protocol', 'remote_host', 'remote_port',
+        'remote_user', 'remote_key_path',
         'file_size_mb', 'start_time', 'end_time',
         'error_message', 'created_by', 'created_at'
     ]
@@ -451,7 +615,17 @@ class BackupRecordAdmin(admin.ModelAdmin):
             'fields': ('status', 'start_time', 'end_time', 'error_message')
         }),
         ('文件信息', {
-            'fields': ('file_path', 'remote_path', 'object_storage_path', 'file_size_mb')
+            'fields': (
+                'file_path',
+                'remote_path',
+                'remote_protocol',
+                'remote_host',
+                'remote_port',
+                'remote_user',
+                'remote_key_path',
+                'object_storage_path',
+                'file_size_mb'
+            )
         }),
         ('元数据', {
             'fields': ('created_by', 'created_at'),
@@ -562,16 +736,40 @@ class BackupRecordAdmin(admin.ModelAdmin):
         temp_path = temp_dir / filename
 
         if record.remote_path:
-            executor = RemoteExecutor(record.instance)
             try:
-                executor.download(record.remote_path, temp_path)
+                if record.remote_protocol:
+                    client = RemoteStorageClient(
+                        protocol=record.remote_protocol,
+                        host=record.remote_host,
+                        port=record.remote_port,
+                        user=record.remote_user,
+                        password=record.get_decrypted_remote_password(),
+                        key_path=record.remote_key_path
+                    )
+                    client.download(record.remote_path, temp_path)
+                else:
+                    executor = RemoteExecutor(record.instance)
+                    executor.download(record.remote_path, temp_path)
                 if temp_path.exists():
                     return temp_path
             except Exception as exc:
                 logger.warning(f"远程备份下载失败: {exc}")
 
         if record.object_storage_path:
-            uploader = ObjectStorageUploader()
+            oss_config = None
+            if record.strategy and (
+                record.strategy.oss_endpoint
+                or record.strategy.oss_access_key_id
+                or record.strategy.oss_bucket
+            ):
+                oss_config = {
+                    'endpoint': record.strategy.oss_endpoint,
+                    'access_key_id': record.strategy.oss_access_key_id,
+                    'access_key_secret': record.strategy.get_decrypted_oss_access_key_secret(),
+                    'bucket': record.strategy.oss_bucket,
+                    'prefix': record.strategy.oss_prefix
+                }
+            uploader = ObjectStorageUploader(config=oss_config)
             try:
                 uploader.download(record.object_storage_path, temp_path)
                 if temp_path.exists():
@@ -660,11 +858,12 @@ class BackupOneOffTaskAdmin(admin.ModelAdmin):
         storage_target = forms.ChoiceField(
             label='存储位置',
             choices=[
-                ('local', '本地路径'),
-                ('remote', '远程服务器路径'),
+                ('default', '默认存储（/app/backups）'),
+                ('mysql_host', 'MySQL 服务器路径'),
+                ('remote_server', '远程服务器路径'),
                 ('oss', '云存储（OSS）'),
             ],
-            initial='local'
+            initial='default'
         )
         store_local = forms.BooleanField(
             label='本地保存',
@@ -679,10 +878,23 @@ class BackupOneOffTaskAdmin(admin.ModelAdmin):
             label='云存储保存',
             required=False
         )
+        remote_password = forms.CharField(
+            label='远程密码',
+            required=False,
+            widget=forms.PasswordInput(render_value=False)
+        )
+        oss_access_key_secret = forms.CharField(
+            label='OSS AccessKey Secret',
+            required=False,
+            widget=forms.PasswordInput(render_value=False)
+        )
 
         class Meta:
             model = BackupOneOffTask
             fields = '__all__'
+
+        class Media:
+            js = ('backups/storage_settings.js',)
 
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
@@ -694,17 +906,27 @@ class BackupOneOffTaskAdmin(admin.ModelAdmin):
             self.fields['store_local'].widget = forms.HiddenInput()
             self.fields['store_remote'].widget = forms.HiddenInput()
             self.fields['store_oss'].widget = forms.HiddenInput()
+            if 'storage_path' in self.fields:
+                self.fields['storage_path'].widget = forms.HiddenInput()
+            if 'storage_mode' in self.fields:
+                self.fields['storage_mode'].widget = forms.HiddenInput()
+            if 'remote_password' in self.fields:
+                self.fields['remote_password'].help_text = '留空则不修改'
+            if 'oss_access_key_secret' in self.fields:
+                self.fields['oss_access_key_secret'].help_text = '留空则不修改'
             self._apply_storage_target_initial()
 
         def _apply_storage_target_initial(self):
             if not self.instance:
                 return
-            if self.instance.store_remote:
-                self.initial['storage_target'] = 'remote'
+            if self.instance.storage_mode:
+                self.initial['storage_target'] = self.instance.storage_mode
+            elif self.instance.store_remote:
+                self.initial['storage_target'] = 'mysql_host'
             elif self.instance.store_oss:
                 self.initial['storage_target'] = 'oss'
             else:
-                self.initial['storage_target'] = 'local'
+                self.initial['storage_target'] = 'default'
 
         def clean_databases(self):
             raw = self.cleaned_data.get('databases')
@@ -738,17 +960,72 @@ class BackupOneOffTaskAdmin(admin.ModelAdmin):
             storage_target = cleaned_data.get('storage_target')
             remote_storage_path = cleaned_data.get('remote_storage_path')
             instance = cleaned_data.get('instance')
+            remote_protocol = cleaned_data.get('remote_protocol')
+            remote_host = cleaned_data.get('remote_host')
+            remote_port = cleaned_data.get('remote_port')
+            remote_user = cleaned_data.get('remote_user')
+            remote_password = cleaned_data.get('remote_password')
+            remote_key_path = cleaned_data.get('remote_key_path')
+            oss_endpoint = cleaned_data.get('oss_endpoint')
+            oss_access_key_id = cleaned_data.get('oss_access_key_id')
+            oss_access_key_secret = cleaned_data.get('oss_access_key_secret')
+            oss_bucket = cleaned_data.get('oss_bucket')
+            oss_prefix = cleaned_data.get('oss_prefix')
 
-            store_local = storage_target == 'local'
-            store_remote = storage_target == 'remote'
+            if not remote_password and self.instance and self.instance.remote_password:
+                cleaned_data['remote_password'] = self.instance.remote_password
+            if not oss_access_key_secret and self.instance and self.instance.oss_access_key_secret:
+                cleaned_data['oss_access_key_secret'] = self.instance.oss_access_key_secret
+
+            store_local = storage_target == 'default'
+            store_remote = storage_target in ['mysql_host', 'remote_server']
             store_oss = storage_target == 'oss'
             cleaned_data['store_local'] = store_local
             cleaned_data['store_remote'] = store_remote
             cleaned_data['store_oss'] = store_oss
+            cleaned_data['storage_mode'] = storage_target or 'default'
 
-            if store_remote and not remote_storage_path:
-                if not (instance and instance.remote_backup_root):
-                    self.add_error('remote_storage_path', '请填写远程存储路径或在实例中配置远程备份目录')
+            if storage_target == 'default':
+                cleaned_data['storage_path'] = ''
+            elif storage_target == 'mysql_host':
+                if not remote_storage_path:
+                    self.add_error('remote_storage_path', '请填写 MySQL 服务器存储路径')
+                if not (instance and instance.ssh_host and instance.ssh_user):
+                    self.add_error('instance', 'MySQL 服务器路径需要在实例中配置 SSH 连接信息')
+            elif storage_target == 'remote_server':
+                if not remote_storage_path:
+                    self.add_error('remote_storage_path', '请填写远程服务器存储路径')
+                if not remote_protocol:
+                    self.add_error('remote_protocol', '请选择远程协议')
+                if not remote_host:
+                    self.add_error('remote_host', '请填写远程主机')
+                if remote_protocol == 'ssh':
+                    if not remote_user:
+                        self.add_error('remote_user', '请填写 SSH 用户')
+                    if not (remote_password or remote_key_path):
+                        self.add_error('remote_password', '请填写 SSH 密码或密钥路径')
+                    cleaned_data['remote_port'] = remote_port or 22
+                elif remote_protocol == 'ftp':
+                    if not remote_user:
+                        self.add_error('remote_user', '请填写 FTP 用户')
+                    if not remote_password:
+                        self.add_error('remote_password', '请填写 FTP 密码')
+                    cleaned_data['remote_port'] = remote_port or 21
+                elif remote_protocol == 'http':
+                    cleaned_data['remote_port'] = remote_port or 80
+                else:
+                    self.add_error('remote_protocol', '不支持的远程协议')
+            elif storage_target == 'oss':
+                if not oss_endpoint:
+                    self.add_error('oss_endpoint', '请填写 OSS Endpoint')
+                if not oss_access_key_id:
+                    self.add_error('oss_access_key_id', '请填写 OSS AccessKey')
+                if not oss_access_key_secret:
+                    self.add_error('oss_access_key_secret', '请填写 OSS AccessKey Secret')
+                if not oss_bucket:
+                    self.add_error('oss_bucket', '请填写 OSS Bucket')
+                if not oss_prefix:
+                    self.add_error('oss_prefix', '请填写 OSS 路径')
 
             if backup_type in ['hot', 'cold', 'incremental'] and databases:
                 self.add_error('databases', '热备/冷备/增量备份不支持指定数据库列表')
@@ -778,9 +1055,20 @@ class BackupOneOffTaskAdmin(admin.ModelAdmin):
                 'databases',
                 'backup_type',
                 'compress',
-                'storage_path',
+                'storage_mode',
                 'storage_target',
                 'remote_storage_path',
+                'remote_protocol',
+                'remote_host',
+                'remote_port',
+                'remote_user',
+                'remote_password',
+                'remote_key_path',
+                'oss_endpoint',
+                'oss_access_key_id',
+                'oss_access_key_secret',
+                'oss_bucket',
+                'oss_prefix',
                 'run_at'
             )
         }),
@@ -813,6 +1101,28 @@ class BackupOneOffTaskAdmin(admin.ModelAdmin):
         if not change:
             obj.created_by = request.user
         super().save_model(request, obj, form, change)
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                'test-storage/',
+                self.admin_site.admin_view(self.test_storage_view),
+                name='backups_backuponeofftask_test_storage'
+            )
+        ]
+        return custom_urls + urls
+
+    def test_storage_view(self, request):
+        if request.method != 'POST':
+            return JsonResponse({'success': False, 'message': '仅支持 POST'}, status=405)
+        storage_target = request.POST.get('storage_target') or 'default'
+        instance_id = request.POST.get('instance')
+        instance = None
+        if instance_id:
+            instance = MySQLInstance.objects.filter(id=instance_id).first()
+        success, message = _test_storage_connection(storage_target, instance, request.POST)
+        return JsonResponse({'success': success, 'message': message})
 
     def response_add(self, request, obj, post_url_continue=None):
         if "_run_now" in request.POST:

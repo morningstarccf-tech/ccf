@@ -8,6 +8,8 @@ import shlex
 import subprocess
 import gzip
 import shutil
+import ftplib
+import requests
 from pathlib import Path
 from datetime import datetime
 from django.conf import settings
@@ -28,13 +30,30 @@ except ImportError:  # pragma: no cover - optional dependency
 class RemoteExecutor:
     """远程命令执行与文件传输（支持本地直连）"""
 
-    def __init__(self, instance):
+    def __init__(
+        self,
+        instance=None,
+        host=None,
+        port=None,
+        user=None,
+        password=None,
+        key_path=None
+    ):
         self.instance = instance
-        self.host = instance.ssh_host.strip() if instance.ssh_host else ''
-        self.port = instance.ssh_port or 22
-        self.user = instance.ssh_user.strip() if instance.ssh_user else ''
-        self.password = instance.get_decrypted_ssh_password() if instance.ssh_password else None
-        self.key_path = instance.ssh_key_path.strip() if instance.ssh_key_path else ''
+        if instance:
+            self.host = (host or instance.ssh_host or '').strip()
+            self.port = port or instance.ssh_port or 22
+            self.user = (user or instance.ssh_user or '').strip()
+            if password is None and instance.ssh_password:
+                password = instance.get_decrypted_ssh_password()
+            self.password = password
+            self.key_path = (key_path or instance.ssh_key_path or '').strip()
+        else:
+            self.host = (host or '').strip()
+            self.port = port or 22
+            self.user = (user or '').strip()
+            self.password = password
+            self.key_path = (key_path or '').strip()
 
     def _is_remote(self) -> bool:
         return bool(self.host and self.user)
@@ -95,16 +114,179 @@ class RemoteExecutor:
             client.close()
 
 
+class RemoteStorageClient:
+    """远程存储客户端（SSH/FTP/HTTP）"""
+
+    def __init__(self, protocol: str, host: str, port: int | None, user: str | None,
+                 password: str | None, key_path: str | None):
+        self.protocol = (protocol or '').lower()
+        self.host = (host or '').strip()
+        self.port = port
+        self.user = user or ''
+        self.password = password
+        self.key_path = key_path or ''
+
+    def _ensure_ready(self):
+        if not self.protocol:
+            raise ValueError('远程协议未设置')
+        if not self.host:
+            raise ValueError('远程主机未设置')
+
+    def _build_http_url(self, remote_path: str) -> str:
+        if remote_path.startswith('http://') or remote_path.startswith('https://'):
+            return remote_path
+        port = self.port or 80
+        base = f"{self.protocol}://{self.host}:{port}"
+        return f"{base}/{remote_path.lstrip('/')}"
+
+    def _ftp_connect(self) -> ftplib.FTP:
+        port = self.port or 21
+        ftp = ftplib.FTP()
+        ftp.connect(self.host, port, timeout=10)
+        ftp.login(self.user, self.password or '')
+        return ftp
+
+    def _ftp_ensure_dir(self, ftp: ftplib.FTP, dir_path: str) -> None:
+        if not dir_path:
+            return
+        parts = [p for p in dir_path.strip('/').split('/') if p]
+        current = ''
+        for part in parts:
+            current = f"{current}/{part}" if current else part
+            try:
+                ftp.mkd(current)
+            except Exception:
+                pass
+
+    def test(self) -> tuple[bool, str]:
+        self._ensure_ready()
+        if self.protocol == 'ssh':
+            executor = RemoteExecutor(
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                password=self.password,
+                key_path=self.key_path
+            )
+            code, _, stderr = executor.run('echo ok', timeout=10)
+            return (code == 0, stderr or 'ok')
+        if self.protocol == 'ftp':
+            try:
+                ftp = self._ftp_connect()
+                ftp.quit()
+                return True, 'ok'
+            except Exception as exc:
+                return False, str(exc)
+        if self.protocol == 'http':
+            try:
+                url = self._build_http_url('/')
+                auth = (self.user, self.password) if self.user or self.password else None
+                resp = requests.head(url, auth=auth, timeout=10)
+                if resp.status_code >= 400:
+                    return False, f"HTTP 状态码 {resp.status_code}"
+                return True, 'ok'
+            except Exception as exc:
+                return False, str(exc)
+        return False, f"不支持的协议: {self.protocol}"
+
+    def upload(self, local_path: Path, remote_path: str) -> str:
+        self._ensure_ready()
+        if self.protocol == 'ssh':
+            executor = RemoteExecutor(
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                password=self.password,
+                key_path=self.key_path
+            )
+            remote_dir = str(Path(remote_path).parent).replace('\\', '/')
+            if remote_dir:
+                executor.run(f"mkdir -p {shlex.quote(remote_dir)}")
+            executor.upload(local_path, remote_path)
+            return remote_path
+        if self.protocol == 'ftp':
+            ftp = self._ftp_connect()
+            try:
+                remote_dir = str(Path(remote_path).parent).replace('\\', '/')
+                self._ftp_ensure_dir(ftp, remote_dir)
+                if remote_dir:
+                    ftp.cwd(remote_dir)
+                with open(local_path, 'rb') as f_in:
+                    ftp.storbinary(f"STOR {Path(remote_path).name}", f_in)
+                return remote_path
+            finally:
+                try:
+                    ftp.quit()
+                except Exception:
+                    ftp.close()
+        if self.protocol == 'http':
+            url = self._build_http_url(remote_path)
+            auth = (self.user, self.password) if self.user or self.password else None
+            with open(local_path, 'rb') as f_in:
+                resp = requests.put(url, data=f_in, auth=auth, timeout=30)
+            if resp.status_code >= 400:
+                raise RuntimeError(f"HTTP 上传失败: {resp.status_code} {resp.text}")
+            return url
+        raise RuntimeError(f"不支持的协议: {self.protocol}")
+
+    def download(self, remote_path: str, local_path: Path) -> None:
+        self._ensure_ready()
+        if self.protocol == 'ssh':
+            executor = RemoteExecutor(
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                password=self.password,
+                key_path=self.key_path
+            )
+            executor.download(remote_path, local_path)
+            return
+        if self.protocol == 'ftp':
+            ftp = self._ftp_connect()
+            try:
+                remote_dir = str(Path(remote_path).parent).replace('\\', '/')
+                if remote_dir:
+                    ftp.cwd(remote_dir)
+                with open(local_path, 'wb') as f_out:
+                    ftp.retrbinary(f"RETR {Path(remote_path).name}", f_out.write)
+            finally:
+                try:
+                    ftp.quit()
+                except Exception:
+                    ftp.close()
+            return
+        if self.protocol == 'http':
+            url = self._build_http_url(remote_path)
+            auth = (self.user, self.password) if self.user or self.password else None
+            resp = requests.get(url, auth=auth, stream=True, timeout=30)
+            if resp.status_code >= 400:
+                raise RuntimeError(f"HTTP 下载失败: {resp.status_code} {resp.text}")
+            with open(local_path, 'wb') as f_out:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    if chunk:
+                        f_out.write(chunk)
+            return
+        raise RuntimeError(f"不支持的协议: {self.protocol}")
+
+
 class ObjectStorageUploader:
     """对象存储上传（Aliyun OSS）。"""
 
-    def __init__(self):
-        self.enabled = getattr(settings, 'OSS_ENABLED', False)
-        self.endpoint = getattr(settings, 'OSS_ENDPOINT', '')
-        self.access_key_id = getattr(settings, 'OSS_ACCESS_KEY_ID', '')
-        self.access_key_secret = getattr(settings, 'OSS_ACCESS_KEY_SECRET', '')
-        self.bucket = getattr(settings, 'OSS_BUCKET', '')
-        self.prefix = getattr(settings, 'OSS_PREFIX', '')
+    def __init__(self, config: dict | None = None):
+        if config:
+            self.enabled = True
+            self.endpoint = config.get('endpoint', '') or ''
+            self.access_key_id = config.get('access_key_id', '') or ''
+            self.access_key_secret = config.get('access_key_secret', '') or ''
+            self.bucket = config.get('bucket', '') or ''
+            self.prefix = config.get('prefix', '') or ''
+        else:
+            self.enabled = getattr(settings, 'OSS_ENABLED', False)
+            self.endpoint = getattr(settings, 'OSS_ENDPOINT', '')
+            self.access_key_id = getattr(settings, 'OSS_ACCESS_KEY_ID', '')
+            self.access_key_secret = getattr(settings, 'OSS_ACCESS_KEY_SECRET', '')
+            self.bucket = getattr(settings, 'OSS_BUCKET', '')
+            self.prefix = getattr(settings, 'OSS_PREFIX', '')
 
     def _is_ready(self) -> bool:
         return bool(
@@ -147,6 +329,17 @@ class ObjectStorageUploader:
         if result.status not in (200, 201, 206):
             raise RuntimeError(f'OSS 下载失败: status={result.status}')
 
+    def test_connection(self) -> tuple[bool, str]:
+        if not self._is_ready():
+            return False, 'OSS 未配置或不可用'
+        try:
+            auth = oss2.Auth(self.access_key_id, self.access_key_secret)
+            bucket = oss2.Bucket(auth, self.endpoint, self.bucket)
+            bucket.get_bucket_info()
+            return True, 'ok'
+        except Exception as exc:
+            return False, str(exc)
+
 
 class BackupExecutor:
     """
@@ -181,12 +374,48 @@ class BackupExecutor:
         executor.run(f"mkdir -p {shlex.quote(remote_dir)}")
         return f"{remote_dir}/{filename}"
 
+    def _build_remote_path(self, filename: str, remote_root_override: str | None = None) -> str | None:
+        remote_root = (remote_root_override or self.instance.remote_backup_root or '').strip()
+        if not remote_root:
+            return None
+        safe_alias = self.instance.alias.replace(' ', '_')
+        remote_dir = f"{remote_root.rstrip('/')}/{safe_alias}"
+        return f"{remote_dir}/{filename}"
+
     def _upload_to_remote(
         self,
         local_path: Path,
         filename: str,
-        remote_root_override: str | None = None
+        remote_root_override: str | None = None,
+        remote_config: dict | None = None
     ) -> str | None:
+        if remote_config:
+            protocol = (remote_config.get('protocol') or 'ssh').lower()
+            remote_path = self._build_remote_path(filename, remote_root_override)
+            if not remote_path:
+                return None
+            if protocol == 'ssh':
+                executor = RemoteExecutor(
+                    host=remote_config.get('host'),
+                    port=remote_config.get('port'),
+                    user=remote_config.get('user'),
+                    password=remote_config.get('password'),
+                    key_path=remote_config.get('key_path')
+                )
+                remote_dir = str(Path(remote_path).parent).replace('\\', '/')
+                executor.run(f"mkdir -p {shlex.quote(remote_dir)}")
+                executor.upload(local_path, remote_path)
+                return remote_path
+            client = RemoteStorageClient(
+                protocol=protocol,
+                host=remote_config.get('host'),
+                port=remote_config.get('port'),
+                user=remote_config.get('user'),
+                password=remote_config.get('password'),
+                key_path=remote_config.get('key_path')
+            )
+            return client.upload(local_path, remote_path)
+
         executor = RemoteExecutor(self.instance)
         remote_path = self._get_remote_backup_path(filename, executor, remote_root_override)
         if not remote_path:
@@ -194,8 +423,8 @@ class BackupExecutor:
         executor.upload(local_path, remote_path)
         return remote_path
 
-    def _upload_to_object_storage(self, local_path: Path, filename: str) -> str | None:
-        uploader = ObjectStorageUploader()
+    def _upload_to_object_storage(self, local_path: Path, filename: str, config: dict | None = None) -> str | None:
+        uploader = ObjectStorageUploader(config=config)
         try:
             return uploader.upload(local_path, self.instance.alias, filename)
         except Exception as exc:
@@ -212,7 +441,9 @@ class BackupExecutor:
         store_local=True,
         store_remote=False,
         store_oss=False,
-        remote_storage_path=None
+        remote_storage_path=None,
+        remote_config=None,
+        oss_config=None
     ):
         """
         执行备份
@@ -263,7 +494,9 @@ class BackupExecutor:
                     store_local,
                     store_remote,
                     store_oss,
-                    remote_storage_path
+                    remote_storage_path,
+                    remote_config,
+                    oss_config
                 )
 
             if backup_type in ['hot']:
@@ -274,7 +507,9 @@ class BackupExecutor:
                     store_local,
                     store_remote,
                     store_oss,
-                    remote_storage_path
+                    remote_storage_path,
+                    remote_config,
+                    oss_config
                 )
 
             if backup_type in ['cold']:
@@ -285,7 +520,9 @@ class BackupExecutor:
                     store_local,
                     store_remote,
                     store_oss,
-                    remote_storage_path
+                    remote_storage_path,
+                    remote_config,
+                    oss_config
                 )
 
             if backup_type in ['incremental']:
@@ -297,7 +534,9 @@ class BackupExecutor:
                     store_local,
                     store_remote,
                     store_oss,
-                    remote_storage_path
+                    remote_storage_path,
+                    remote_config,
+                    oss_config
                 )
 
             return {
@@ -433,7 +672,9 @@ class BackupExecutor:
         store_local,
         store_remote,
         store_oss,
-        remote_storage_path
+        remote_storage_path,
+        remote_config,
+        oss_config
     ):
         """执行逻辑备份（mysqldump）"""
         dump_bin = self._get_dump_binary()
@@ -486,14 +727,19 @@ class BackupExecutor:
                 remote_path = self._upload_to_remote(
                     final_path,
                     final_path.name,
-                    remote_storage_path
+                    remote_storage_path,
+                    remote_config
                 )
             except Exception as exc:
                 logger.warning(f"远程备份上传失败: {exc}")
 
         object_storage_path = ''
         if store_oss:
-            object_storage_path = self._upload_to_object_storage(final_path, final_path.name) or ''
+            object_storage_path = self._upload_to_object_storage(
+                final_path,
+                final_path.name,
+                config=oss_config
+            ) or ''
 
         if not store_local:
             if final_path.exists():
@@ -561,7 +807,9 @@ class BackupExecutor:
         store_local,
         store_remote,
         store_oss,
-        remote_storage_path
+        remote_storage_path,
+        remote_config,
+        oss_config
     ):
         """执行热备（xtrabackup 全量）"""
         if not self.instance.data_dir:
@@ -584,7 +832,7 @@ class BackupExecutor:
 
         remote_archive = self._archive_remote_dir(executor, remote_dir, compress)
         remote_keep_path = None
-        if store_remote:
+        if store_remote and not remote_config:
             remote_keep_path = self._get_remote_backup_path(
                 archive_name,
                 executor,
@@ -605,9 +853,23 @@ class BackupExecutor:
             executor.run(f"rm -f {shlex.quote(remote_archive)}")
 
         file_size_mb = local_path.stat().st_size / (1024 * 1024)
+        if store_remote and remote_config:
+            try:
+                remote_keep_path = self._upload_to_remote(
+                    local_path,
+                    local_path.name,
+                    remote_storage_path,
+                    remote_config
+                )
+            except Exception as exc:
+                logger.warning(f"远程备份上传失败: {exc}")
         object_storage_path = ''
         if store_oss:
-            object_storage_path = self._upload_to_object_storage(local_path, local_path.name) or ''
+            object_storage_path = self._upload_to_object_storage(
+                local_path,
+                local_path.name,
+                config=oss_config
+            ) or ''
 
         if not store_local and local_path.exists():
             local_path.unlink()
@@ -629,7 +891,9 @@ class BackupExecutor:
         store_local,
         store_remote,
         store_oss,
-        remote_storage_path
+        remote_storage_path,
+        remote_config,
+        oss_config
     ):
         """执行增量备份（xtrabackup 增量）"""
         if not base_backup or not base_backup.file_path:
@@ -665,7 +929,7 @@ class BackupExecutor:
 
         remote_archive = self._archive_remote_dir(executor, remote_dir, compress)
         remote_keep_path = None
-        if store_remote:
+        if store_remote and not remote_config:
             remote_keep_path = self._get_remote_backup_path(
                 archive_name,
                 executor,
@@ -689,9 +953,23 @@ class BackupExecutor:
             executor.run(f"rm -f {shlex.quote(remote_archive)}")
 
         file_size_mb = local_path.stat().st_size / (1024 * 1024)
+        if store_remote and remote_config:
+            try:
+                remote_keep_path = self._upload_to_remote(
+                    local_path,
+                    local_path.name,
+                    remote_storage_path,
+                    remote_config
+                )
+            except Exception as exc:
+                logger.warning(f"远程备份上传失败: {exc}")
         object_storage_path = ''
         if store_oss:
-            object_storage_path = self._upload_to_object_storage(local_path, local_path.name) or ''
+            object_storage_path = self._upload_to_object_storage(
+                local_path,
+                local_path.name,
+                config=oss_config
+            ) or ''
 
         if not store_local and local_path.exists():
             local_path.unlink()
@@ -712,7 +990,9 @@ class BackupExecutor:
         store_local,
         store_remote,
         store_oss,
-        remote_storage_path
+        remote_storage_path,
+        remote_config,
+        oss_config
     ):
         """执行冷备（停库复制数据目录）"""
         if not self.instance.data_dir:
@@ -754,7 +1034,7 @@ class BackupExecutor:
             executor.run(start_cmd, timeout=600)
 
         remote_keep_path = None
-        if store_remote:
+        if store_remote and not remote_config:
             remote_keep_path = self._get_remote_backup_path(
                 archive_name,
                 executor,
@@ -773,9 +1053,23 @@ class BackupExecutor:
             executor.run(f"rm -f {shlex.quote(remote_archive)}")
 
         file_size_mb = local_path.stat().st_size / (1024 * 1024)
+        if store_remote and remote_config:
+            try:
+                remote_keep_path = self._upload_to_remote(
+                    local_path,
+                    local_path.name,
+                    remote_storage_path,
+                    remote_config
+                )
+            except Exception as exc:
+                logger.warning(f"远程备份上传失败: {exc}")
         object_storage_path = ''
         if store_oss:
-            object_storage_path = self._upload_to_object_storage(local_path, local_path.name) or ''
+            object_storage_path = self._upload_to_object_storage(
+                local_path,
+                local_path.name,
+                config=oss_config
+            ) or ''
 
         if not store_local and local_path.exists():
             local_path.unlink()

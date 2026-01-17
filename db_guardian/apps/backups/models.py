@@ -7,6 +7,7 @@ from django.db import models
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
 from django.core.validators import MinValueValidator
+from apps.instances.models import PasswordEncryptor
 import logging
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,19 @@ class BackupStrategy(models.Model):
         ('incremental', _('增量备份')),
         ('hot', _('热备份')),
         ('cold', _('冷备份')),
+    ]
+
+    STORAGE_MODE_CHOICES = [
+        ('default', _('默认容器路径')),
+        ('mysql_host', _('MySQL 服务器路径')),
+        ('remote_server', _('远程服务器路径')),
+        ('oss', _('云存储（OSS）')),
+    ]
+
+    REMOTE_PROTOCOL_CHOICES = [
+        ('ssh', _('SSH')),
+        ('ftp', _('FTP')),
+        ('http', _('HTTP')),
     ]
     
     name = models.CharField(
@@ -81,6 +95,14 @@ class BackupStrategy(models.Model):
         help_text=_('备份文件的存储路径，为空则使用默认路径')
     )
 
+    storage_mode = models.CharField(
+        _('存储位置'),
+        max_length=20,
+        choices=STORAGE_MODE_CHOICES,
+        default='default',
+        help_text=_('备份文件的存储位置')
+    )
+
     store_local = models.BooleanField(
         _('本地保存'),
         default=True,
@@ -104,6 +126,82 @@ class BackupStrategy(models.Model):
         max_length=500,
         blank=True,
         help_text=_('远程服务器存储路径（优先于实例的远程备份目录）')
+    )
+
+    remote_protocol = models.CharField(
+        _('远程协议'),
+        max_length=10,
+        choices=REMOTE_PROTOCOL_CHOICES,
+        blank=True,
+        help_text=_('远程服务器传输协议')
+    )
+
+    remote_host = models.CharField(
+        _('远程主机'),
+        max_length=255,
+        blank=True,
+        help_text=_('远程服务器地址')
+    )
+
+    remote_port = models.PositiveIntegerField(
+        _('远程端口'),
+        null=True,
+        blank=True,
+        help_text=_('远程服务器端口')
+    )
+
+    remote_user = models.CharField(
+        _('远程用户名'),
+        max_length=100,
+        blank=True,
+        help_text=_('远程服务器用户名')
+    )
+
+    remote_password = models.TextField(
+        _('远程密码'),
+        blank=True,
+        help_text=_('加密存储的远程服务器密码')
+    )
+
+    remote_key_path = models.CharField(
+        _('远程密钥路径'),
+        max_length=500,
+        blank=True,
+        help_text=_('远程服务器私钥路径（优先于密码）')
+    )
+
+    oss_endpoint = models.CharField(
+        _('OSS Endpoint'),
+        max_length=255,
+        blank=True,
+        help_text=_('对象存储 Endpoint')
+    )
+
+    oss_access_key_id = models.CharField(
+        _('OSS AccessKey'),
+        max_length=255,
+        blank=True,
+        help_text=_('对象存储 AccessKey ID')
+    )
+
+    oss_access_key_secret = models.TextField(
+        _('OSS AccessKey Secret'),
+        blank=True,
+        help_text=_('加密存储的对象存储密钥')
+    )
+
+    oss_bucket = models.CharField(
+        _('OSS Bucket'),
+        max_length=255,
+        blank=True,
+        help_text=_('对象存储 Bucket 名称')
+    )
+
+    oss_prefix = models.CharField(
+        _('OSS 路径'),
+        max_length=255,
+        blank=True,
+        help_text=_('对象存储路径前缀')
     )
     
     compress = models.BooleanField(
@@ -129,6 +227,41 @@ class BackupStrategy(models.Model):
         _('更新时间'),
         auto_now=True
     )
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            old = BackupStrategy.objects.filter(pk=self.pk).only(
+                'remote_password', 'oss_access_key_secret'
+            ).first()
+            if old and old.remote_password != self.remote_password:
+                if self.remote_password:
+                    self.remote_password = PasswordEncryptor.encrypt(self.remote_password)
+            if old and old.oss_access_key_secret != self.oss_access_key_secret:
+                if self.oss_access_key_secret:
+                    self.oss_access_key_secret = PasswordEncryptor.encrypt(self.oss_access_key_secret)
+        else:
+            if self.remote_password:
+                self.remote_password = PasswordEncryptor.encrypt(self.remote_password)
+            if self.oss_access_key_secret:
+                self.oss_access_key_secret = PasswordEncryptor.encrypt(self.oss_access_key_secret)
+
+        super().save(*args, **kwargs)
+
+    def get_decrypted_remote_password(self) -> str:
+        if not self.remote_password:
+            return ''
+        try:
+            return PasswordEncryptor.decrypt(self.remote_password)
+        except Exception:
+            return self.remote_password
+
+    def get_decrypted_oss_access_key_secret(self) -> str:
+        if not self.oss_access_key_secret:
+            return ''
+        try:
+            return PasswordEncryptor.decrypt(self.oss_access_key_secret)
+        except Exception:
+            return self.oss_access_key_secret
     
     class Meta:
         db_table = 'backup_strategy'
@@ -283,6 +416,48 @@ class BackupRecord(models.Model):
         help_text=_('远程服务器备份路径')
     )
 
+    remote_protocol = models.CharField(
+        _('远程协议'),
+        max_length=10,
+        choices=BackupStrategy.REMOTE_PROTOCOL_CHOICES,
+        blank=True,
+        help_text=_('远程服务器传输协议')
+    )
+
+    remote_host = models.CharField(
+        _('远程主机'),
+        max_length=255,
+        blank=True,
+        help_text=_('远程服务器地址')
+    )
+
+    remote_port = models.PositiveIntegerField(
+        _('远程端口'),
+        null=True,
+        blank=True,
+        help_text=_('远程服务器端口')
+    )
+
+    remote_user = models.CharField(
+        _('远程用户名'),
+        max_length=100,
+        blank=True,
+        help_text=_('远程服务器用户名')
+    )
+
+    remote_password = models.TextField(
+        _('远程密码'),
+        blank=True,
+        help_text=_('加密存储的远程服务器密码')
+    )
+
+    remote_key_path = models.CharField(
+        _('远程密钥路径'),
+        max_length=500,
+        blank=True,
+        help_text=_('远程服务器私钥路径（优先于密码）')
+    )
+
     object_storage_path = models.CharField(
         _('对象存储路径'),
         max_length=500,
@@ -358,6 +533,14 @@ class BackupRecord(models.Model):
             return (self.end_time - self.start_time).total_seconds()
         return None
 
+    def get_decrypted_remote_password(self) -> str:
+        if not self.remote_password:
+            return ''
+        try:
+            return PasswordEncryptor.decrypt(self.remote_password)
+        except Exception:
+            return self.remote_password
+
 
 class BackupOneOffTask(models.Model):
     """
@@ -419,6 +602,14 @@ class BackupOneOffTask(models.Model):
         help_text=_('备份文件的存储路径，为空则使用默认路径')
     )
 
+    storage_mode = models.CharField(
+        _('存储位置'),
+        max_length=20,
+        choices=BackupStrategy.STORAGE_MODE_CHOICES,
+        default='default',
+        help_text=_('备份文件的存储位置')
+    )
+
     store_local = models.BooleanField(
         _('本地保存'),
         default=True,
@@ -442,6 +633,82 @@ class BackupOneOffTask(models.Model):
         max_length=500,
         blank=True,
         help_text=_('远程服务器存储路径（优先于实例的远程备份目录）')
+    )
+
+    remote_protocol = models.CharField(
+        _('远程协议'),
+        max_length=10,
+        choices=BackupStrategy.REMOTE_PROTOCOL_CHOICES,
+        blank=True,
+        help_text=_('远程服务器传输协议')
+    )
+
+    remote_host = models.CharField(
+        _('远程主机'),
+        max_length=255,
+        blank=True,
+        help_text=_('远程服务器地址')
+    )
+
+    remote_port = models.PositiveIntegerField(
+        _('远程端口'),
+        null=True,
+        blank=True,
+        help_text=_('远程服务器端口')
+    )
+
+    remote_user = models.CharField(
+        _('远程用户名'),
+        max_length=100,
+        blank=True,
+        help_text=_('远程服务器用户名')
+    )
+
+    remote_password = models.TextField(
+        _('远程密码'),
+        blank=True,
+        help_text=_('加密存储的远程服务器密码')
+    )
+
+    remote_key_path = models.CharField(
+        _('远程密钥路径'),
+        max_length=500,
+        blank=True,
+        help_text=_('远程服务器私钥路径（优先于密码）')
+    )
+
+    oss_endpoint = models.CharField(
+        _('OSS Endpoint'),
+        max_length=255,
+        blank=True,
+        help_text=_('对象存储 Endpoint')
+    )
+
+    oss_access_key_id = models.CharField(
+        _('OSS AccessKey'),
+        max_length=255,
+        blank=True,
+        help_text=_('对象存储 AccessKey ID')
+    )
+
+    oss_access_key_secret = models.TextField(
+        _('OSS AccessKey Secret'),
+        blank=True,
+        help_text=_('加密存储的对象存储密钥')
+    )
+
+    oss_bucket = models.CharField(
+        _('OSS Bucket'),
+        max_length=255,
+        blank=True,
+        help_text=_('对象存储 Bucket 名称')
+    )
+
+    oss_prefix = models.CharField(
+        _('OSS 路径'),
+        max_length=255,
+        blank=True,
+        help_text=_('对象存储路径前缀')
     )
 
     status = models.CharField(
@@ -487,6 +754,41 @@ class BackupOneOffTask(models.Model):
         _('创建时间'),
         auto_now_add=True
     )
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            old = BackupOneOffTask.objects.filter(pk=self.pk).only(
+                'remote_password', 'oss_access_key_secret'
+            ).first()
+            if old and old.remote_password != self.remote_password:
+                if self.remote_password:
+                    self.remote_password = PasswordEncryptor.encrypt(self.remote_password)
+            if old and old.oss_access_key_secret != self.oss_access_key_secret:
+                if self.oss_access_key_secret:
+                    self.oss_access_key_secret = PasswordEncryptor.encrypt(self.oss_access_key_secret)
+        else:
+            if self.remote_password:
+                self.remote_password = PasswordEncryptor.encrypt(self.remote_password)
+            if self.oss_access_key_secret:
+                self.oss_access_key_secret = PasswordEncryptor.encrypt(self.oss_access_key_secret)
+
+        super().save(*args, **kwargs)
+
+    def get_decrypted_remote_password(self) -> str:
+        if not self.remote_password:
+            return ''
+        try:
+            return PasswordEncryptor.decrypt(self.remote_password)
+        except Exception:
+            return self.remote_password
+
+    def get_decrypted_oss_access_key_secret(self) -> str:
+        if not self.oss_access_key_secret:
+            return ''
+        try:
+            return PasswordEncryptor.decrypt(self.oss_access_key_secret)
+        except Exception:
+            return self.oss_access_key_secret
 
     started_at = models.DateTimeField(
         _('开始时间'),
