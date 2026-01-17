@@ -4,6 +4,7 @@
 为用户、角色、权限、团队等模型提供后台管理界面。
 """
 from django.contrib import admin
+from django.contrib.auth.models import Group, Permission as DjangoPermission
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.translation import gettext_lazy as _
 from .models import User, Role, Permission, Team, TeamMember
@@ -197,3 +198,10 @@ class TeamMemberAdmin(admin.ModelAdmin):
 admin.site.site_header = _('AuroraVault 管理后台')
 admin.site.site_title = _('AuroraVault')
 admin.site.index_title = _('欢迎使用 AuroraVault 管理系统')
+
+# 隐藏 Django 自带的“认证和授权”(Group/Permission) 模块入口
+for model in (Group, DjangoPermission):
+    try:
+        admin.site.unregister(model)
+    except admin.sites.NotRegistered:
+        pass
