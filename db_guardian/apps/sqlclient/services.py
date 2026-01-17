@@ -159,6 +159,9 @@ class QueryExecutor:
             )
             result['history_id'] = history.id
             
+            result['success'] = True
+            result['message'] = '执行成功'
+
             # 10. 缓存结果（仅查询类SQL）
             if sql_type in ['SELECT', 'SHOW', 'DESC', 'EXPLAIN'] and data:
                 cache_data = {
@@ -167,10 +170,12 @@ class QueryExecutor:
                     'rows_affected': result['rows_affected'],
                     'sql_type': sql_type
                 }
-                history.cache_result(cache_data)
-            
-            result['success'] = True
-            result['message'] = '执行成功'
+                try:
+                    history.cache_result(cache_data)
+                except Exception as cache_error:
+                    cache_msg = f'结果缓存失败: {cache_error}'
+                    result['warnings'].append(cache_msg)
+                    logger.warning(cache_msg)
             
         except pymysql.Error as e:
             # MySQL错误
