@@ -66,6 +66,8 @@ logs/*.log
 *.tmp
 .env.local
 .env.production
+backup/
+backups/
 
 # UV
 uv.lock
