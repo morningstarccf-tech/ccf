@@ -277,6 +277,15 @@ class BackupExecutor:
         # 添加密码（使用环境变量更安全，但为简化直接在命令中）
         if password:
             cmd_parts.append(f'-p"{password}"')
+
+        # SSL/TLS 配置（默认禁用以兼容自签名证书）
+        ssl_mode = getattr(settings, 'MYSQL_DUMP_SSL_MODE', 'DISABLED')
+        if ssl_mode:
+            cmd_parts.append(f'--ssl-mode={ssl_mode}')
+
+        ssl_ca = getattr(settings, 'MYSQL_DUMP_SSL_CA', '')
+        if ssl_ca:
+            cmd_parts.append(f'--ssl-ca="{ssl_ca}"')
         
         # 添加常用选项
         cmd_parts.extend([
