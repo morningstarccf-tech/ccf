@@ -5,12 +5,14 @@ SQL客户端应用 Admin 配置
 from django.contrib import admin, messages
 from django import forms
 from django.template.response import TemplateResponse
-from django.urls import reverse
+from django.urls import reverse, path
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
+from django.http import JsonResponse
 from .models import QueryHistory, SQLTerminal
 from .services import QueryExecutor
 from apps.instances.models import MySQLInstance
+import json
 
 
 class QueryExecutionForm(forms.Form):
@@ -186,48 +188,67 @@ class SQLTerminalAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
+    def get_urls(self):
+        """添加 SQL 执行端点"""
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                'execute/',
+                self.admin_site.admin_view(self.execute_sql_view),
+                name='sqlclient_sqlterminal_execute'
+            ),
+        ]
+        return custom_urls + urls
+
+    def execute_sql_view(self, request):
+        """执行 SQL 并返回 JSON 结果"""
+        if request.method != 'POST':
+            return JsonResponse({'success': False, 'message': '只支持 POST 请求'}, status=405)
+
+        data = request.POST
+        if request.content_type == 'application/json':
+            try:
+                payload = json.loads(request.body.decode('utf-8') or '{}')
+            except json.JSONDecodeError:
+                payload = {}
+            data = payload
+
+        form = QueryExecutionForm(data)
+        if not form.is_valid():
+            return JsonResponse({
+                'success': False,
+                'message': '请求参数错误',
+                'errors': form.errors
+            }, status=400)
+
+        instance = form.cleaned_data['instance']
+        database = form.cleaned_data.get('database') or None
+        sql = form.cleaned_data['sql']
+        timeout = form.cleaned_data['timeout']
+        apply_limit = form.cleaned_data['apply_limit']
+        max_rows = form.cleaned_data['max_rows']
+
+        executor = QueryExecutor(instance, request.user)
+        result = executor.execute_query(
+            sql=sql,
+            database=database,
+            timeout=timeout,
+            apply_limit=apply_limit,
+            max_rows=max_rows
+        )
+
+        return JsonResponse(result)
+
     def changelist_view(self, request, extra_context=None):
         """执行 SQL 并写入历史记录"""
-        result = None
-        if request.method == 'POST':
-            form = QueryExecutionForm(request.POST)
-            if form.is_valid():
-                instance = form.cleaned_data['instance']
-                database = form.cleaned_data.get('database') or None
-                sql = form.cleaned_data['sql']
-                timeout = form.cleaned_data['timeout']
-                apply_limit = form.cleaned_data['apply_limit']
-                max_rows = form.cleaned_data['max_rows']
-
-                executor = QueryExecutor(instance, request.user)
-                result = executor.execute_query(
-                    sql=sql,
-                    database=database,
-                    timeout=timeout,
-                    apply_limit=apply_limit,
-                    max_rows=max_rows
-                )
-
-                if result.get('success'):
-                    history_id = result.get('history_id')
-                    if history_id:
-                        history_url = reverse('admin:sqlclient_queryhistory_change', args=[history_id])
-                        messages.success(
-                            request,
-                            mark_safe(f'执行成功，<a href="{history_url}">查看历史记录</a>')
-                        )
-                    else:
-                        messages.success(request, '执行成功')
-                else:
-                    messages.error(request, result.get('message', '执行失败'))
-        else:
-            form = QueryExecutionForm()
+        form = QueryExecutionForm()
 
         context = {
             **self.admin_site.each_context(request),
             'title': 'SQL 终端',
             'form': form,
-            'result': result,
+            'execute_url': reverse('admin:sqlclient_sqlterminal_execute'),
+            'history_url': reverse('admin:sqlclient_queryhistory_changelist'),
         }
         if extra_context:
             context.update(extra_context)

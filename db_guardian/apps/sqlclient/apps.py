@@ -6,3 +6,4 @@ class SqlclientConfig(AppConfig):
     name = 'apps.sqlclient'
     verbose_name = 'SQL客户端'
 
+
