@@ -41,6 +41,10 @@ class BackupStrategyAdmin(admin.ModelAdmin):
     """
 
     class BackupStrategyForm(forms.ModelForm):
+        cron_expression = forms.CharField(
+            required=False,
+            widget=forms.HiddenInput()
+        )
         databases = forms.CharField(
             label='数据库列表',
             required=False,
@@ -101,7 +105,6 @@ class BackupStrategyAdmin(admin.ModelAdmin):
                     self.fields['databases'].initial = ','.join(self.instance.databases)
                 else:
                     self.fields['databases'].initial = str(self.instance.databases)
-            self.fields['cron_expression'].widget = forms.HiddenInput()
             self._apply_schedule_initial()
 
         def _apply_schedule_initial(self):
@@ -235,6 +238,7 @@ class BackupStrategyAdmin(admin.ModelAdmin):
                 'schedule_weekday',
                 'schedule_day',
                 'schedule_minute',
+                'cron_expression',
                 'backup_type',
                 'retention_days',
                 'compress'
