@@ -5,11 +5,14 @@ MySQL 实例管理的服务层代码
 """
 import time
 import logging
+import re
+import shlex
 from typing import Optional, Dict, Any, Tuple
 from contextlib import contextmanager
 from django.utils import timezone
 import pymysql
 from pymysql.cursors import DictCursor
+from apps.backups.services import RemoteExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -343,11 +346,13 @@ class MetricsCollector:
             
             connection.close()
             
-            # 注意：CPU、内存、磁盘使用率需要通过操作系统命令获取
-            # 这里设置默认值，实际应该通过 SSH 或 Agent 采集
-            metrics['cpu_usage'] = 0
-            metrics['memory_usage'] = 0
-            metrics['disk_usage'] = 0
+            system_metrics = MetricsCollector._collect_system_metrics(instance)
+            if system_metrics:
+                metrics.update(system_metrics)
+            else:
+                metrics['cpu_usage'] = 0
+                metrics['memory_usage'] = 0
+                metrics['disk_usage'] = 0
             
             return metrics
         
@@ -387,6 +392,52 @@ class MetricsCollector:
         except Exception as e:
             logger.error(f"Failed to save metrics for {instance.alias}: {str(e)}")
             return False
+
+    @staticmethod
+    def _collect_system_metrics(instance) -> Optional[Dict[str, Any]]:
+        """通过 SSH 采集 CPU/内存/磁盘使用率。"""
+        executor = RemoteExecutor(instance)
+        if not executor._is_remote():
+            return None
+
+        metrics: Dict[str, Any] = {}
+
+        # CPU usage
+        code, stdout, _ = executor.run("LANG=C top -bn1 | grep 'Cpu(s)'")
+        if code == 0 and stdout:
+            idle_match = re.search(r'([0-9.]+)\\s*id', stdout)
+            if idle_match:
+                idle = float(idle_match.group(1))
+                metrics['cpu_usage'] = round(max(0.0, 100.0 - idle), 2)
+
+        # Memory usage
+        code, stdout, _ = executor.run("LANG=C free -m | awk '/Mem:/ {print $2\" \"$3}'")
+        if code == 0 and stdout:
+            parts = stdout.strip().split()
+            if len(parts) >= 2:
+                total = float(parts[0])
+                used = float(parts[1])
+                if total > 0:
+                    metrics['memory_usage'] = round((used / total) * 100, 2)
+
+        # Disk usage
+        disk_path = instance.data_dir or '/'
+        quoted_path = shlex.quote(disk_path)
+        code, stdout, _ = executor.run(f"df -P {quoted_path} | tail -1")
+        if code == 0 and stdout:
+            parts = stdout.split()
+            if len(parts) >= 5:
+                percent = parts[4].strip().rstrip('%')
+                if percent.replace('.', '', 1).isdigit():
+                    metrics['disk_usage'] = round(float(percent), 2)
+
+        if not metrics:
+            return None
+
+        metrics.setdefault('cpu_usage', 0)
+        metrics.setdefault('memory_usage', 0)
+        metrics.setdefault('disk_usage', 0)
+        return metrics
 
 
 class DatabaseSyncService:

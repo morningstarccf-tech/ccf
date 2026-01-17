@@ -1,0 +1,31 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+  <h1>SQL 执行</h1>
+
+  <form method="post" novalidate>
+    {% csrf_token %}
+    <fieldset class="module aligned">
+      {{ form.as_p }}
+    </fieldset>
+    <div class="submit-row">
+      <input type="submit" class="default" value="执行">
+      <a href="{% url 'admin:sqlclient_queryhistory_changelist' %}" class="button">返回</a>
+    </div>
+  </form>
+
+  {% if result %}
+    <h2>执行结果</h2>
+    <p>状态：{{ result.success|yesno:"成功,失败" }}</p>
+    <p>SQL 类型：{{ result.sql_type }}</p>
+    <p>影响行数：{{ result.rows_affected }}</p>
+    <p>耗时(ms)：{{ result.execution_time_ms }}</p>
+    {% if result.message %}
+      <p>消息：{{ result.message }}</p>
+    {% endif %}
+    {% if result.data %}
+      <h3>返回数据（最多展示前 50 行）</h3>
+      <pre style="max-height: 300px; overflow: auto;">{{ result.data|slice:":50" }}</pre>
+    {% endif %}
+  {% endif %}
+{% endblock %}

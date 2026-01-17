@@ -282,6 +282,16 @@ class MySQLInstanceViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         databases = instance.databases.all().order_by('name')
         refresh = str(request.query_params.get('refresh', '')).lower() in ('1', 'true', 'yes')
+        if refresh:
+            try:
+                DatabaseSyncService.sync_databases(
+                    instance,
+                    refresh_stats=True,
+                    include_system=False
+                )
+                databases = instance.databases.all().order_by('name')
+            except Exception as exc:
+                logger.warning(f"Failed to sync databases for {instance.alias}: {exc}")
         self._refresh_db_stats(databases, force=refresh)
         serializer = DatabaseSerializer(databases, many=True)
         return Response(serializer.data)
@@ -403,6 +413,7 @@ class MySQLInstanceViewSet(viewsets.ModelViewSet):
             'message': '同步完成',
             'created': result['created'],
             'updated': result['updated'],
+            'deleted': result.get('deleted', 0),
             'total': result['total'],
             'refresh_stats': refresh_stats,
             'databases': result['databases']
