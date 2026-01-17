@@ -1,0 +1,302 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static %}
+
+{% block bodyclass %}login aurora-login{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+  :root {
+    --aurora-card-bg: rgba(255, 255, 255, 0.92);
+    --aurora-card-border: rgba(255, 255, 255, 0.6);
+    --aurora-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+    --aurora-accent: #6d5b77;
+    --aurora-muted: rgba(255, 255, 255, 0.55);
+  }
+
+  body.aurora-login {
+    min-height: 100vh;
+    background: #0f0b14;
+  }
+
+  body.aurora-login #header,
+  body.aurora-login #branding,
+  body.aurora-login .breadcrumbs,
+  body.aurora-login #nav-sidebar {
+    display: none !important;
+  }
+
+  body.aurora-login #content {
+    padding: 0;
+  }
+
+  .aurora-login__wrapper {
+    position: relative;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    background:
+      linear-gradient(120deg, rgba(18, 10, 32, 0.75), rgba(63, 38, 68, 0.45)),
+      url("{% static 'login/plo.jpg' %}") center/cover no-repeat;
+  }
+
+  .aurora-login__overlay {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.08), transparent 45%),
+      radial-gradient(circle at 80% 10%, rgba(255, 255, 255, 0.06), transparent 40%);
+    pointer-events: none;
+  }
+
+  .aurora-login__card {
+    position: relative;
+    z-index: 2;
+    width: min(520px, 92vw);
+    background: var(--aurora-card-bg);
+    border-radius: 20px;
+    border: 1px solid var(--aurora-card-border);
+    box-shadow: var(--aurora-shadow);
+    padding: 28px 30px;
+    backdrop-filter: blur(8px);
+  }
+
+  .aurora-login__brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+
+  .aurora-login__logo {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    background: #14111a;
+    color: #fff;
+    font-size: 22px;
+  }
+
+  .aurora-login__title {
+    font-size: 22px;
+    font-weight: 700;
+    color: #2b2b2b;
+  }
+
+  .aurora-login__subtitle {
+    color: #606068;
+    font-size: 14px;
+    margin-top: 4px;
+  }
+
+  .aurora-login__form {
+    margin-top: 18px;
+  }
+
+  .aurora-login__field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+
+  .aurora-login__field label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #4a4a55;
+  }
+
+  .aurora-login__input {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid #e4e4ea;
+    background: #f6f6f8;
+    font-size: 14px;
+    color: #222;
+  }
+
+  .aurora-login__input:focus {
+    outline: none;
+    border-color: var(--aurora-accent);
+    box-shadow: 0 0 0 3px rgba(109, 91, 119, 0.15);
+  }
+
+  .aurora-login__button {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: none;
+    background: var(--aurora-accent);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 6px;
+  }
+
+  .aurora-login__button:hover {
+    background: #5c4c65;
+  }
+
+  .aurora-login__error {
+    background: #ffe9ec;
+    border: 1px solid #ffb7c0;
+    color: #a21b32;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    margin-bottom: 12px;
+  }
+
+  .aurora-login__help {
+    font-size: 12px;
+    color: #7a7a85;
+    margin-top: 10px;
+  }
+
+  #petal-container {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .petal {
+    position: absolute;
+    bottom: -10vh;
+    width: 12px;
+    height: 8px;
+    border-radius: 50% 50% 50% 50%;
+    opacity: 0.85;
+    filter: blur(0.3px);
+    animation-name: petal-float;
+    animation-iteration-count: infinite;
+    animation-timing-function: linear;
+  }
+
+  @keyframes petal-float {
+    0% {
+      transform: translate3d(0, 0, 0) rotate(0deg);
+      opacity: 0;
+    }
+    10% {
+      opacity: 0.9;
+    }
+    100% {
+      transform: translate3d(var(--drift), -120vh, 0) rotate(360deg);
+      opacity: 0;
+    }
+  }
+
+  @media (max-width: 600px) {
+    .aurora-login__card {
+      padding: 22px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .petal {
+      animation: none;
+      display: none;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="aurora-login__wrapper">
+  <div class="aurora-login__overlay"></div>
+  <div id="petal-container"></div>
+  <div class="aurora-login__card">
+    <div class="aurora-login__brand">
+      <div class="aurora-login__logo">🗄️</div>
+      <div>
+        <div class="aurora-login__title">AuroraVault</div>
+        <div class="aurora-login__subtitle">安全、简单的数据库备份解决方案</div>
+      </div>
+    </div>
+
+    {% if form.errors and not form.non_field_errors %}
+      <div class="aurora-login__error">
+        {% trans "用户名或密码不正确，请重试。" %}
+      </div>
+    {% endif %}
+
+    {% if form.non_field_errors %}
+      <div class="aurora-login__error">
+        {{ form.non_field_errors }}
+      </div>
+    {% endif %}
+
+    <form class="aurora-login__form" method="post" action="{{ app_path }}">
+      {% csrf_token %}
+      <div class="aurora-login__field">
+        <label for="id_username">{% trans "用户名" %}</label>
+        <input
+          type="text"
+          name="{{ form.username.name }}"
+          id="id_username"
+          value="{{ form.username.value|default_if_none:'' }}"
+          class="aurora-login__input"
+          placeholder="{% trans "输入用户名" %}"
+          autofocus
+          required
+        >
+      </div>
+      <div class="aurora-login__field">
+        <label for="id_password">{% trans "密码" %}</label>
+        <input
+          type="password"
+          name="{{ form.password.name }}"
+          id="id_password"
+          class="aurora-login__input"
+          placeholder="{% trans "输入密码" %}"
+          required
+        >
+      </div>
+      <input type="hidden" name="next" value="{{ next }}">
+      <button type="submit" class="aurora-login__button">{% trans "登录" %}</button>
+    </form>
+
+    <div class="aurora-login__help">
+      {% trans "请输入您的账号以访问管理系统。" %}
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var container = document.getElementById('petal-container');
+    if (!container) return;
+
+    var petalCount = 22;
+    var colors = ['rgba(255,255,255,0.9)', 'rgba(255,192,203,0.9)'];
+
+    for (var i = 0; i < petalCount; i++) {
+      var petal = document.createElement('div');
+      petal.className = 'petal';
+
+      var size = 8 + Math.random() * 10;
+      var left = Math.random() * 100;
+      var duration = 18 + Math.random() * 18;
+      var delay = -(Math.random() * duration);
+      var drift = (Math.random() * 80 - 40).toFixed(1) + 'vw';
+
+      petal.style.left = left + 'vw';
+      petal.style.width = size + 'px';
+      petal.style.height = (size * 0.6) + 'px';
+      petal.style.background = colors[Math.floor(Math.random() * colors.length)];
+      petal.style.animationDuration = duration + 's';
+      petal.style.animationDelay = delay + 's';
+      petal.style.setProperty('--drift', drift);
+
+      container.appendChild(petal);
+    }
+  })();
+</script>
+{% endblock %}
