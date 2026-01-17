@@ -1,0 +1,58 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+  <style>
+    .restore-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+    }
+    .restore-table th,
+    .restore-table td {
+      border: 1px solid #e0e0e0;
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .status-success { color: #1f7a1f; font-weight: bold; }
+    .status-disabled { color: #999; }
+  </style>
+
+  <p class="help">当前仅支持从“全量备份”执行在线恢复，热备/冷备/增量备份需按物理恢复流程。</p>
+
+  <table class="restore-table">
+    <thead>
+      <tr>
+        <th>记录ID</th>
+        <th>实例</th>
+        <th>数据库</th>
+        <th>备份类型</th>
+        <th>备份时间</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for record in records %}
+        <tr>
+          <td>{{ record.id }}</td>
+          <td>{{ record.instance.alias }}</td>
+          <td>{{ record.database_name|default:"全实例" }}</td>
+          <td>{{ record.get_backup_type_display }}</td>
+          <td>{{ record.created_at|date:"Y-m-d H:i" }}</td>
+          <td>
+            {% if record.backup_type == 'full' %}
+              <a href="{% url 'admin:backups_backuprecord_restore' record.id %}" onclick="return confirm('确认要恢复该备份吗？')">恢复</a>
+            {% else %}
+              <span class="status-disabled">暂不支持</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="6">暂无可恢复的备份记录</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

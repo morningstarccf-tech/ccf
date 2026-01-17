@@ -522,3 +522,12 @@ class BackupTaskBoard(BackupRecord):
         verbose_name = _('任务列表')
         verbose_name_plural = _('任务列表')
 
+
+class BackupRestoreBoard(BackupRecord):
+    """备份恢复（代理模型）"""
+
+    class Meta:
+        proxy = True
+        verbose_name = _('备份恢复')
+        verbose_name_plural = _('备份恢复')
+

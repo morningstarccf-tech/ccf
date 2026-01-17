@@ -16,7 +16,13 @@ from django.utils import timezone
 from django.urls import reverse, path
 from django.shortcuts import get_object_or_404
 from pathlib import Path
-from apps.backups.models import BackupStrategy, BackupRecord, BackupOneOffTask, BackupTaskBoard
+from apps.backups.models import (
+    BackupStrategy,
+    BackupRecord,
+    BackupOneOffTask,
+    BackupTaskBoard,
+    BackupRestoreBoard
+)
 from apps.backups.tasks import execute_backup_task, execute_oneoff_backup_task
 from apps.backups.services import StrategyManager, RemoteExecutor, ObjectStorageUploader
 from apps.backups.services import RestoreExecutor
@@ -859,6 +865,36 @@ class BackupTaskBoardAdmin(admin.ModelAdmin):
             'strategy_add_url': reverse('admin:backups_backupstrategy_add'),
             'oneoff_add_url': reverse('admin:backups_backuponeofftask_add'),
             'record_changelist_url': reverse('admin:backups_backuprecord_changelist'),
+        }
+        if extra_context:
+            context.update(extra_context)
+        return TemplateResponse(request, self.change_list_template, context)
+
+
+@admin.register(BackupRestoreBoard)
+class BackupRestoreBoardAdmin(admin.ModelAdmin):
+    """恢复管理（按备份记录进行恢复）"""
+
+    change_list_template = 'admin/backups/backuprestoreboard/change_list.html'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def changelist_view(self, request, extra_context=None):
+        records = BackupRecord.objects.filter(
+            status='success'
+        ).select_related('instance', 'strategy').order_by('-created_at')[:200]
+
+        context = {
+            **self.admin_site.each_context(request),
+            'title': '备份恢复',
+            'records': records,
         }
         if extra_context:
             context.update(extra_context)
