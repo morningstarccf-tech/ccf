@@ -219,7 +219,7 @@ class BackupRecordSerializer(serializers.ModelSerializer):
     backup_type_display = serializers.CharField(source='get_backup_type_display', read_only=True)
     duration_seconds = serializers.SerializerMethodField()
     download_url = serializers.SerializerMethodField()
-    base_backup_id = serializers.IntegerField(source='base_backup.id', read_only=True)
+    base_backup_id = serializers.IntegerField(source='base_backup_id', read_only=True)
     
     class Meta:
         model = BackupRecord
@@ -384,10 +384,10 @@ class BackupRecordListSerializer(serializers.ModelSerializer):
     """
     
     instance_alias = serializers.CharField(source='instance.alias', read_only=True)
-    strategy_name = serializers.CharField(source='strategy.name', read_only=True)
+    strategy_name = serializers.SerializerMethodField()
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     backup_type_display = serializers.CharField(source='get_backup_type_display', read_only=True)
-    base_backup_id = serializers.IntegerField(source='base_backup.id', read_only=True)
+    base_backup_id = serializers.IntegerField(source='base_backup_id', read_only=True)
     
     class Meta:
         model = BackupRecord
@@ -399,3 +399,9 @@ class BackupRecordListSerializer(serializers.ModelSerializer):
             'base_backup_id'
         ]
         read_only_fields = '__all__'
+
+    def get_strategy_name(self, obj):
+        """防止手动备份没有策略导致序列化失败"""
+        if obj.strategy_id:
+            return obj.strategy.name
+        return None
