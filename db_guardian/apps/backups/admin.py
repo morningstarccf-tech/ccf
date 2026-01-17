@@ -8,10 +8,12 @@ from django.contrib import admin, messages
 from django.http import HttpResponseRedirect
 from django import forms
 from django.utils.html import format_html
-from django.urls import reverse
+from django.urls import reverse, path
+from django.shortcuts import get_object_or_404
 from pathlib import Path
 from apps.backups.models import BackupStrategy, BackupRecord
 from apps.backups.tasks import execute_backup_task
+from apps.backups.services import RestoreExecutor
 
 
 @admin.register(BackupStrategy)
@@ -167,7 +169,7 @@ class BackupRecordAdmin(admin.ModelAdmin):
     list_display = [
         'id', 'instance', 'database_name', 'backup_type',
         'status_badge', 'file_size_mb', 'start_time', 'duration',
-        'download_link'
+        'download_link', 'restore_link'
     ]
     
     list_filter = [
@@ -249,3 +251,58 @@ class BackupRecordAdmin(admin.ModelAdmin):
         url = f"/api/backups/records/{obj.id}/download/"
         return format_html('<a href="{}">下载</a>', url)
     download_link.short_description = '下载'
+
+    def restore_link(self, obj):
+        """显示恢复链接（仅支持成功的全量备份）"""
+        if obj.status != 'success' or obj.backup_type != 'full':
+            return '-'
+        if not obj.file_path or not Path(obj.file_path).exists():
+            return '-'
+        url = reverse('admin:backups_backuprecord_restore', args=[obj.id])
+        return format_html(
+            '<a href="{}" onclick="return confirm(\'确认要恢复该备份吗？\')">恢复</a>',
+            url
+        )
+    restore_link.short_description = '恢复'
+
+    def get_urls(self):
+        """添加恢复操作的自定义路由"""
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                '<int:record_id>/restore/',
+                self.admin_site.admin_view(self.restore_view),
+                name='backups_backuprecord_restore'
+            ),
+        ]
+        return custom_urls + urls
+
+    def restore_view(self, request, record_id):
+        """从备份记录恢复数据"""
+        record = get_object_or_404(BackupRecord, pk=record_id)
+        redirect_url = request.META.get(
+            'HTTP_REFERER',
+            reverse('admin:backups_backuprecord_changelist')
+        )
+
+        if record.status != 'success':
+            messages.error(request, '只能从成功的备份中恢复')
+            return HttpResponseRedirect(redirect_url)
+
+        if record.backup_type in ['hot', 'cold', 'incremental']:
+            messages.error(request, '热备/冷备/增量备份暂不支持在线恢复')
+            return HttpResponseRedirect(redirect_url)
+
+        if not record.file_path or not Path(record.file_path).exists():
+            messages.error(request, '备份文件不存在，无法恢复')
+            return HttpResponseRedirect(redirect_url)
+
+        target_db = request.GET.get('target_db') or None
+        executor = RestoreExecutor(record.instance)
+        result = executor.execute_restore(record.file_path, target_db)
+        if result.get('success'):
+            messages.success(request, '恢复完成')
+        else:
+            messages.error(request, result.get('error_message', '恢复失败'))
+
+        return HttpResponseRedirect(redirect_url)
