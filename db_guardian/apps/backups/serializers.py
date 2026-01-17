@@ -231,7 +231,13 @@ class BackupRecordSerializer(serializers.ModelSerializer):
             'error_message', 'created_by', 'created_at', 'download_url',
             'base_backup_id'
         ]
-        read_only_fields = '__all__'
+        read_only_fields = [
+            'id', 'instance', 'strategy', 'database_name', 'backup_type',
+            'backup_type_display', 'status', 'status_display', 'file_path',
+            'remote_path', 'object_storage_path', 'file_size_mb', 'start_time',
+            'end_time', 'duration_seconds', 'error_message', 'created_by',
+            'created_at', 'download_url', 'base_backup_id'
+        ]
     
     def get_duration_seconds(self, obj):
         """
@@ -398,7 +404,12 @@ class BackupRecordListSerializer(serializers.ModelSerializer):
             'remote_path', 'object_storage_path',
             'base_backup_id'
         ]
-        read_only_fields = '__all__'
+        read_only_fields = [
+            'id', 'instance_alias', 'strategy_name', 'database_name',
+            'backup_type', 'backup_type_display', 'status', 'status_display',
+            'file_size_mb', 'start_time', 'end_time', 'created_at',
+            'remote_path', 'object_storage_path', 'base_backup_id'
+        ]
 
     def get_strategy_name(self, obj):
         """防止手动备份没有策略导致序列化失败"""
