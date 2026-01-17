@@ -1,0 +1,190 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+  <style>
+    .task-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .task-tabs {
+      display: flex;
+      gap: 12px;
+      list-style: none;
+      padding: 0;
+      margin: 0 0 16px 0;
+    }
+    .task-tabs a {
+      padding: 6px 12px;
+      border-radius: 4px;
+      text-decoration: none;
+      border: 1px solid #d0d0d0;
+      color: #333;
+      display: inline-block;
+    }
+    .task-tabs .active a {
+      background: #2c6faa;
+      color: #fff;
+      border-color: #2c6faa;
+    }
+    .task-section {
+      margin-bottom: 24px;
+    }
+    .task-section h2 {
+      margin: 12px 0;
+      font-size: 16px;
+    }
+    .task-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+    }
+    .task-table th,
+    .task-table td {
+      border: 1px solid #e0e0e0;
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .status-success { color: #1f7a1f; font-weight: bold; }
+    .status-failed { color: #c1272d; font-weight: bold; }
+    .status-pending { color: #666; font-weight: bold; }
+    .status-running { color: #2c6faa; font-weight: bold; }
+  </style>
+
+  <h1>任务列表</h1>
+  <div class="task-actions">
+    <a class="button" href="{{ strategy_add_url }}">新增周期任务</a>
+    <a class="button" href="{{ oneoff_add_url }}">新增定时任务</a>
+    <a class="button" href="{{ record_changelist_url }}">查看备份记录</a>
+  </div>
+
+  <ul class="task-tabs">
+    <li class="{% if tab == 'pending' %}active{% endif %}">
+      <a href="?tab=pending">待执行</a>
+    </li>
+    <li class="{% if tab == 'executed' %}active{% endif %}">
+      <a href="?tab=executed">已执行</a>
+    </li>
+  </ul>
+
+  {% if tab == 'executed' %}
+    <div class="task-section">
+      <h2>已执行任务</h2>
+      <table class="task-table">
+        <thead>
+          <tr>
+            <th>记录ID</th>
+            <th>实例</th>
+            <th>数据库</th>
+            <th>备份类型</th>
+            <th>状态</th>
+            <th>开始时间</th>
+            <th>结束时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for record in executed_records %}
+            <tr>
+              <td>
+                <a href="{% url 'admin:backups_backuprecord_change' record.id %}">{{ record.id }}</a>
+              </td>
+              <td>{{ record.instance.alias }}</td>
+              <td>{{ record.database_name|default:"全实例" }}</td>
+              <td>{{ record.get_backup_type_display }}</td>
+              <td>
+                {% if record.status == 'success' %}
+                  <span class="status-success">成功</span>
+                {% else %}
+                  <span class="status-failed">失败</span>
+                {% endif %}
+              </td>
+              <td>{{ record.start_time|date:"Y-m-d H:i" }}</td>
+              <td>{{ record.end_time|date:"Y-m-d H:i" }}</td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="7">暂无已执行任务</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="task-section">
+      <h2>周期任务</h2>
+      <table class="task-table">
+        <thead>
+          <tr>
+            <th>策略</th>
+            <th>实例</th>
+            <th>备份类型</th>
+            <th>计划</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for strategy in pending_strategies %}
+            <tr>
+              <td>{{ strategy.name }}</td>
+              <td>{{ strategy.instance.alias }}</td>
+              <td>{{ strategy.get_backup_type_display }}</td>
+              <td>{{ strategy.get_schedule_display }}</td>
+              <td><span class="status-pending">启用</span></td>
+              <td>
+                <a href="{% url 'admin:backups_backupstrategy_change' strategy.id %}">查看</a>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="6">暂无周期任务</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="task-section">
+      <h2>定时任务</h2>
+      <table class="task-table">
+        <thead>
+          <tr>
+            <th>任务</th>
+            <th>实例</th>
+            <th>备份类型</th>
+            <th>执行时间</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for task in pending_oneoffs %}
+            <tr>
+              <td>{{ task.name }}</td>
+              <td>{{ task.instance.alias }}</td>
+              <td>{{ task.get_backup_type_display }}</td>
+              <td>{{ task.run_at|date:"Y-m-d H:i" }}</td>
+              <td>
+                {% if task.status == 'running' %}
+                  <span class="status-running">执行中</span>
+                {% else %}
+                  <span class="status-pending">等待中</span>
+                {% endif %}
+              </td>
+              <td>
+                <a href="{% url 'admin:backups_backuponeofftask_change' task.id %}">查看</a>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="6">暂无定时任务</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+{% endblock %}

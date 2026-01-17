@@ -4,19 +4,35 @@
 提供备份策略和备份记录的后台管理界面。
 """
 import json
+import datetime
 from django.contrib import admin, messages
 from django.http import HttpResponseRedirect
+from django.template.response import TemplateResponse
 from django import forms
 from django.utils.html import format_html
 from django.utils import timezone
 from django.urls import reverse, path
 from django.shortcuts import get_object_or_404
 from pathlib import Path
-from apps.backups.models import BackupStrategy, BackupRecord, BackupOneOffTask
+from apps.backups.models import BackupStrategy, BackupRecord, BackupOneOffTask, BackupTaskBoard
 from apps.backups.tasks import execute_backup_task, execute_oneoff_backup_task
 from apps.backups.services import StrategyManager
 from apps.backups.services import RestoreExecutor
 
+try:
+    from django_celery_beat.models import (
+        PeriodicTask,
+        CrontabSchedule,
+        IntervalSchedule,
+        SolarSchedule,
+        ClockedSchedule
+    )
+except Exception:
+    PeriodicTask = None
+    CrontabSchedule = None
+    IntervalSchedule = None
+    SolarSchedule = None
+    ClockedSchedule = None
 
 @admin.register(BackupStrategy)
 class BackupStrategyAdmin(admin.ModelAdmin):
@@ -31,6 +47,48 @@ class BackupStrategyAdmin(admin.ModelAdmin):
             widget=forms.Textarea(attrs={'rows': 2}),
             help_text='支持 JSON 数组或逗号分隔，如 ["db1","db2"] 或 db1,db2'
         )
+        schedule_type = forms.ChoiceField(
+            label='周期类型',
+            choices=[
+                ('daily', '每天'),
+                ('weekly', '每周'),
+                ('monthly', '每月'),
+                ('hourly', '每小时'),
+            ],
+            initial='daily'
+        )
+        schedule_time = forms.TimeField(
+            label='执行时间',
+            required=False,
+            input_formats=['%H:%M'],
+            widget=forms.TimeInput(format='%H:%M'),
+            help_text='24 小时制，如 08:30'
+        )
+        schedule_weekday = forms.ChoiceField(
+            label='星期',
+            required=False,
+            choices=[
+                ('1', '周一'),
+                ('2', '周二'),
+                ('3', '周三'),
+                ('4', '周四'),
+                ('5', '周五'),
+                ('6', '周六'),
+                ('0', '周日'),
+            ]
+        )
+        schedule_day = forms.IntegerField(
+            label='每月日期',
+            required=False,
+            min_value=1,
+            max_value=31
+        )
+        schedule_minute = forms.IntegerField(
+            label='每小时分钟',
+            required=False,
+            min_value=0,
+            max_value=59
+        )
 
         class Meta:
             model = BackupStrategy
@@ -43,6 +101,42 @@ class BackupStrategyAdmin(admin.ModelAdmin):
                     self.fields['databases'].initial = ','.join(self.instance.databases)
                 else:
                     self.fields['databases'].initial = str(self.instance.databases)
+            self.fields['cron_expression'].widget = forms.HiddenInput()
+            self._apply_schedule_initial()
+
+        def _apply_schedule_initial(self):
+            cron_expr = self.instance.cron_expression if self.instance else None
+            if not cron_expr:
+                return
+            parts = cron_expr.strip().split()
+            if len(parts) != 5:
+                return
+
+            minute, hour, day_of_month, _month_of_year, day_of_week = parts
+            if day_of_month == '*' and day_of_week == '*':
+                if hour == '*':
+                    self.initial['schedule_type'] = 'hourly'
+                    if minute.isdigit():
+                        self.initial['schedule_minute'] = int(minute)
+                else:
+                    self.initial['schedule_type'] = 'daily'
+                    if hour.isdigit() and minute.isdigit():
+                        self.initial['schedule_time'] = datetime.time(int(hour), int(minute))
+                return
+
+            if day_of_month == '*' and day_of_week != '*':
+                self.initial['schedule_type'] = 'weekly'
+                self.initial['schedule_weekday'] = day_of_week
+                if hour.isdigit() and minute.isdigit():
+                    self.initial['schedule_time'] = datetime.time(int(hour), int(minute))
+                return
+
+            if day_of_month != '*' and day_of_week == '*':
+                self.initial['schedule_type'] = 'monthly'
+                if day_of_month.isdigit():
+                    self.initial['schedule_day'] = int(day_of_month)
+                if hour.isdigit() and minute.isdigit():
+                    self.initial['schedule_time'] = datetime.time(int(hour), int(minute))
 
         def clean_databases(self):
             raw = self.cleaned_data.get('databases')
@@ -71,6 +165,37 @@ class BackupStrategyAdmin(admin.ModelAdmin):
 
         def clean(self):
             cleaned_data = super().clean()
+            schedule_type = cleaned_data.get('schedule_type')
+            schedule_time = cleaned_data.get('schedule_time')
+            schedule_weekday = cleaned_data.get('schedule_weekday')
+            schedule_day = cleaned_data.get('schedule_day')
+            schedule_minute = cleaned_data.get('schedule_minute')
+
+            if schedule_type == 'hourly':
+                if schedule_minute is None:
+                    self.add_error('schedule_minute', '请选择每小时分钟')
+                else:
+                    cleaned_data['cron_expression'] = f"{schedule_minute} * * * *"
+            elif schedule_type == 'daily':
+                if not schedule_time:
+                    self.add_error('schedule_time', '请选择执行时间')
+                else:
+                    cleaned_data['cron_expression'] = f"{schedule_time.minute} {schedule_time.hour} * * *"
+            elif schedule_type == 'weekly':
+                if not schedule_time:
+                    self.add_error('schedule_time', '请选择执行时间')
+                if not schedule_weekday:
+                    self.add_error('schedule_weekday', '请选择星期')
+                if schedule_time and schedule_weekday:
+                    cleaned_data['cron_expression'] = f"{schedule_time.minute} {schedule_time.hour} * * {schedule_weekday}"
+            elif schedule_type == 'monthly':
+                if not schedule_time:
+                    self.add_error('schedule_time', '请选择执行时间')
+                if not schedule_day:
+                    self.add_error('schedule_day', '请选择每月日期')
+                if schedule_time and schedule_day:
+                    cleaned_data['cron_expression'] = f"{schedule_time.minute} {schedule_time.hour} {schedule_day} * *"
+
             backup_type = cleaned_data.get('backup_type')
             databases = cleaned_data.get('databases')
             if backup_type in ['hot', 'cold', 'incremental'] and databases:
@@ -80,7 +205,7 @@ class BackupStrategyAdmin(admin.ModelAdmin):
     form = BackupStrategyForm
     
     list_display = [
-        'id', 'name', 'instance', 'backup_type', 'cron_expression',
+        'id', 'name', 'instance', 'backup_type', 'schedule_display',
         'retention_days', 'is_enabled_badge', 'compress', 'created_at'
     ]
     
@@ -104,7 +229,16 @@ class BackupStrategyAdmin(admin.ModelAdmin):
             'fields': ('name', 'instance', 'databases')
         }),
         ('备份配置', {
-            'fields': ('cron_expression', 'backup_type', 'retention_days', 'compress')
+            'fields': (
+                'schedule_type',
+                'schedule_time',
+                'schedule_weekday',
+                'schedule_day',
+                'schedule_minute',
+                'backup_type',
+                'retention_days',
+                'compress'
+            )
         }),
         ('存储设置', {
             'fields': ('storage_path', 'is_enabled')
@@ -127,6 +261,11 @@ class BackupStrategyAdmin(admin.ModelAdmin):
             '<span style="color: red;">✗ 禁用</span>'
         )
     is_enabled_badge.short_description = '状态'
+
+    def schedule_display(self, obj):
+        """显示调度规则"""
+        return obj.get_schedule_display()
+    schedule_display.short_description = '计划'
     
     def save_model(self, request, obj, form, change):
         """保存时设置创建者"""
@@ -489,3 +628,53 @@ class BackupOneOffTaskAdmin(admin.ModelAdmin):
             messages.success(request, f'已创建立即执行任务，任务ID: {task.id}')
             return HttpResponseRedirect(request.path)
         return super().response_change(request, obj)
+
+
+@admin.register(BackupTaskBoard)
+class BackupTaskBoardAdmin(admin.ModelAdmin):
+    """任务列表（合并展示周期任务与定时任务）"""
+
+    change_list_template = 'admin/backups/backuptaskboard/change_list.html'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def changelist_view(self, request, extra_context=None):
+        tab = request.GET.get('tab', 'pending')
+        pending_strategies = BackupStrategy.objects.filter(is_enabled=True).select_related('instance')
+        pending_oneoffs = BackupOneOffTask.objects.filter(
+            status__in=['pending', 'running']
+        ).select_related('instance', 'backup_record')
+
+        executed_records = BackupRecord.objects.filter(
+            status__in=['success', 'failed']
+        ).select_related('instance', 'strategy').order_by('-created_at')[:200]
+
+        context = {
+            **self.admin_site.each_context(request),
+            'title': '任务列表',
+            'tab': tab,
+            'pending_strategies': pending_strategies,
+            'pending_oneoffs': pending_oneoffs,
+            'executed_records': executed_records,
+            'strategy_add_url': reverse('admin:backups_backupstrategy_add'),
+            'oneoff_add_url': reverse('admin:backups_backuponeofftask_add'),
+            'record_changelist_url': reverse('admin:backups_backuprecord_changelist'),
+        }
+        if extra_context:
+            context.update(extra_context)
+        return TemplateResponse(request, self.change_list_template, context)
+
+
+for model in (PeriodicTask, CrontabSchedule, IntervalSchedule, SolarSchedule, ClockedSchedule):
+    if model:
+        try:
+            admin.site.unregister(model)
+        except admin.sites.NotRegistered:
+            pass

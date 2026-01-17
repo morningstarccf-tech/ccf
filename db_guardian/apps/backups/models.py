@@ -132,6 +132,44 @@ class BackupStrategy(models.Model):
         backup_root = getattr(settings, 'BACKUP_STORAGE_PATH', settings.BASE_DIR / 'backups')
         return str(Path(backup_root) / self.instance.alias)
 
+    def get_schedule_display(self):
+        """获取策略调度描述（默认使用 Cron 表达式）"""
+        cron_expr = (self.cron_expression or '').strip()
+        parts = cron_expr.split()
+        if len(parts) != 5:
+            return cron_expr or '-'
+
+        minute, hour, day_of_month, _month_of_year, day_of_week = parts
+        if day_of_month == '*' and day_of_week == '*':
+            if hour == '*':
+                if minute.isdigit():
+                    return f"每小时 {int(minute):02d} 分"
+                return cron_expr
+            if hour.isdigit() and minute.isdigit():
+                return f"每天 {int(hour):02d}:{int(minute):02d}"
+            return cron_expr
+
+        weekday_map = {
+            '1': '周一',
+            '2': '周二',
+            '3': '周三',
+            '4': '周四',
+            '5': '周五',
+            '6': '周六',
+            '0': '周日',
+        }
+        if day_of_month == '*' and day_of_week in weekday_map:
+            if hour.isdigit() and minute.isdigit():
+                return f"每周{weekday_map[day_of_week]} {int(hour):02d}:{int(minute):02d}"
+            return cron_expr
+
+        if day_of_month.isdigit() and day_of_week == '*':
+            if hour.isdigit() and minute.isdigit():
+                return f"每月{int(day_of_month)}日 {int(hour):02d}:{int(minute):02d}"
+            return cron_expr
+
+        return cron_expr
+
 
 class BackupRecord(models.Model):
     """
@@ -417,4 +455,13 @@ class BackupOneOffTask(models.Model):
 
     def __str__(self):
         return f"{self.name} - {self.instance.alias}"
+
+
+class BackupTaskBoard(BackupRecord):
+    """备份任务总览（代理模型）"""
+
+    class Meta:
+        proxy = True
+        verbose_name = _('任务列表')
+        verbose_name_plural = _('任务列表')
 
