@@ -13,6 +13,7 @@ from django.shortcuts import get_object_or_404
 from pathlib import Path
 from apps.backups.models import BackupStrategy, BackupRecord
 from apps.backups.tasks import execute_backup_task
+from apps.backups.services import StrategyManager
 from apps.backups.services import RestoreExecutor
 
 
@@ -90,7 +91,7 @@ class BackupStrategyAdmin(admin.ModelAdmin):
         'name', 'instance__alias', 'cron_expression'
     ]
 
-    actions = ['trigger_backup_action']
+    actions = ['trigger_backup_action', 'enable_strategy_action', 'disable_strategy_action']
     change_form_template = 'admin/backups/backupstrategy/change_form.html'
     
     readonly_fields = [
@@ -144,6 +145,30 @@ class BackupStrategyAdmin(admin.ModelAdmin):
             except Exception as exc:
                 messages.error(request, f'立即备份失败: {exc}')
             return HttpResponseRedirect(request.path)
+        if "_enable_strategy" in request.POST:
+            if obj.is_enabled:
+                messages.info(request, '策略已处于启用状态')
+                return HttpResponseRedirect(request.path)
+            try:
+                obj.is_enabled = True
+                obj.save(update_fields=['is_enabled'])
+                StrategyManager.sync_to_celery_beat()
+                messages.success(request, '策略已启用并同步到调度器')
+            except Exception as exc:
+                messages.error(request, f'启用策略失败: {exc}')
+            return HttpResponseRedirect(request.path)
+        if "_disable_strategy" in request.POST:
+            if not obj.is_enabled:
+                messages.info(request, '策略已处于禁用状态')
+                return HttpResponseRedirect(request.path)
+            try:
+                obj.is_enabled = False
+                obj.save(update_fields=['is_enabled'])
+                StrategyManager.sync_to_celery_beat()
+                messages.success(request, '策略已禁用并同步到调度器')
+            except Exception as exc:
+                messages.error(request, f'禁用策略失败: {exc}')
+            return HttpResponseRedirect(request.path)
         return super().response_change(request, obj)
 
     @admin.action(description='立即执行备份')
@@ -158,6 +183,26 @@ class BackupStrategyAdmin(admin.ModelAdmin):
                 messages.error(request, f'{strategy.name} 触发失败: {exc}')
         if created_count:
             messages.success(request, f'已创建 {created_count} 个备份任务')
+
+    @admin.action(description='启用备份策略')
+    def enable_strategy_action(self, request, queryset):
+        """批量启用策略"""
+        updated = queryset.filter(is_enabled=False).update(is_enabled=True)
+        if updated:
+            StrategyManager.sync_to_celery_beat()
+            messages.success(request, f'已启用 {updated} 个策略')
+        else:
+            messages.info(request, '没有需要启用的策略')
+
+    @admin.action(description='禁用备份策略')
+    def disable_strategy_action(self, request, queryset):
+        """批量禁用策略"""
+        updated = queryset.filter(is_enabled=True).update(is_enabled=False)
+        if updated:
+            StrategyManager.sync_to_celery_beat()
+            messages.success(request, f'已禁用 {updated} 个策略')
+        else:
+            messages.info(request, '没有需要禁用的策略')
 
 
 @admin.register(BackupRecord)
