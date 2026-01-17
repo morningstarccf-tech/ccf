@@ -252,6 +252,23 @@ class BackupExecutor:
         """获取可用的导出命令（mysqldump 或 mariadb-dump）。"""
         return shutil.which('mysqldump') or shutil.which('mariadb-dump')
 
+    def _get_user_databases(self) -> list[str]:
+        """获取非系统库列表，避免备份/恢复 mysql 系统表引发错误。"""
+        system_dbs = {'information_schema', 'mysql', 'performance_schema', 'sys'}
+        dbs = []
+        try:
+            connection = self.instance.get_connection()
+            with connection.cursor() as cursor:
+                cursor.execute('SHOW DATABASES')
+                for row in cursor.fetchall():
+                    name = row.get('Database') if isinstance(row, dict) else row[0]
+                    if name and name.lower() not in system_dbs:
+                        dbs.append(name)
+            connection.close()
+        except Exception as exc:
+            logger.error(f"获取数据库列表失败: {exc}")
+        return dbs
+
     def _supports_ssl_mode(self, dump_bin: str) -> bool:
         """检测 mysqldump 是否支持 --ssl-mode 选项。"""
         try:
@@ -318,9 +335,17 @@ class BackupExecutor:
         
         # 指定数据库
         if database_name:
-            cmd_parts.append(f'--databases {database_name}')
+            cmd_parts.append(f'--databases {shlex.quote(database_name)}')
         else:
-            cmd_parts.append('--all-databases')
+            include_system = getattr(settings, 'MYSQL_DUMP_INCLUDE_SYSTEM_DATABASES', False)
+            if include_system:
+                cmd_parts.append('--all-databases')
+            else:
+                dbs = self._get_user_databases()
+                if not dbs:
+                    raise ValueError('未找到可备份的非系统数据库')
+                safe_dbs = ' '.join(shlex.quote(db) for db in dbs)
+                cmd_parts.append(f'--databases {safe_dbs}')
         
         # 输出重定向
         cmd = ' '.join(cmd_parts) + f' > "{output_file}"'
@@ -337,7 +362,13 @@ class BackupExecutor:
             }
 
         file_path = storage_path / filename
-        dump_cmd = self._build_mysqldump_command(database_name, str(file_path), dump_bin)
+        try:
+            dump_cmd = self._build_mysqldump_command(database_name, str(file_path), dump_bin)
+        except ValueError as exc:
+            return {
+                'success': False,
+                'error_message': str(exc)
+            }
 
         logger.info(f"开始逻辑备份: {self.instance.alias}")
         result = subprocess.run(

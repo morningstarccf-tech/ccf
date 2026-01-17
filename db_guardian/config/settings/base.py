@@ -126,6 +126,11 @@ BACKUP_STORAGE_PATH = config(
 )
 MYSQL_DUMP_SSL_MODE = config('MYSQL_DUMP_SSL_MODE', default='DISABLED')
 MYSQL_DUMP_SSL_CA = config('MYSQL_DUMP_SSL_CA', default='')
+MYSQL_DUMP_INCLUDE_SYSTEM_DATABASES = config(
+    'MYSQL_DUMP_INCLUDE_SYSTEM_DATABASES',
+    default=False,
+    cast=bool
+)
 
 # Aliyun OSS (optional)
 OSS_ENABLED = config('OSS_ENABLED', default=False, cast=bool)
