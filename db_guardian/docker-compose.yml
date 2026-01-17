@@ -2,9 +2,9 @@ services:
   # PostgreSQL 数据库服务
   postgres:
     image: postgres:15-alpine
-    container_name: db_guardian_postgres
+    container_name: auroravault_postgres
     environment:
-      POSTGRES_DB: db_guardian
+      POSTGRES_DB: ${DB_NAME:-auroravault}
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     volumes:
@@ -20,7 +20,7 @@ services:
   # Redis 服务
   redis:
     image: redis:7-alpine
-    container_name: db_guardian_redis
+    container_name: auroravault_redis
     command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
@@ -35,7 +35,7 @@ services:
   # Django Web 服务
   web:
     build: .
-    container_name: db_guardian_web
+    container_name: auroravault_web
     command: uv run gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4
     volumes:
       - .:/app
@@ -52,7 +52,7 @@ services:
       - SECURE_SSL_REDIRECT=${SECURE_SSL_REDIRECT:-false}
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_NAME=db_guardian
+      - DB_NAME=${DB_NAME:-auroravault}
       - DB_USER=postgres
       - DB_PASSWORD=postgres
       - CELERY_BROKER_URL=redis://redis:6379/0
@@ -73,7 +73,7 @@ services:
   # Celery Worker 服务
   celery_worker:
     build: .
-    container_name: db_guardian_celery_worker
+    container_name: auroravault_celery_worker
     command: uv run celery -A tasks worker --loglevel=info
     volumes:
       - .:/app
@@ -86,7 +86,7 @@ services:
       - SECURE_SSL_REDIRECT=${SECURE_SSL_REDIRECT:-false}
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_NAME=db_guardian
+      - DB_NAME=${DB_NAME:-auroravault}
       - DB_USER=postgres
       - DB_PASSWORD=postgres
       - CELERY_BROKER_URL=redis://redis:6379/0
@@ -100,7 +100,7 @@ services:
   # Celery Beat 服务
   celery_beat:
     build: .
-    container_name: db_guardian_celery_beat
+    container_name: auroravault_celery_beat
     command: uv run celery -A tasks beat --loglevel=info
     volumes:
       - .:/app
@@ -112,7 +112,7 @@ services:
       - SECURE_SSL_REDIRECT=${SECURE_SSL_REDIRECT:-false}
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_NAME=db_guardian
+      - DB_NAME=${DB_NAME:-auroravault}
       - DB_USER=postgres
       - DB_PASSWORD=postgres
       - CELERY_BROKER_URL=redis://redis:6379/0
@@ -126,7 +126,7 @@ services:
   # Nginx 反向代理 (可选)
   nginx:
     image: nginx:alpine
-    container_name: db_guardian_nginx
+    container_name: auroravault_nginx
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d:ro
       - static_volume:/var/www/staticfiles

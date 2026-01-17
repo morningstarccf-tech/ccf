@@ -25,7 +25,7 @@ DATABASES = {
 # DATABASES = {
 #     'default': {
 #         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': config('DB_NAME', default='db_guardian_dev'),
+#         'NAME': config('DB_NAME', default='auroravault_dev'),
 #         'USER': config('DB_USER', default='postgres'),
 #         'PASSWORD': config('DB_PASSWORD', default='postgres'),
 #         'HOST': config('DB_HOST', default='localhost'),

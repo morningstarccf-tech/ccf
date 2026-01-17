@@ -158,7 +158,7 @@ uv run isort .
 | `DJANGO_ENV`        | 运行环境 (development/production) | development              |
 | `SECRET_KEY`        | Django密钥                        | -                        |
 | `DEBUG`             | 调试模式                          | False                    |
-| `DB_NAME`           | 数据库名                          | db_guardian              |
+| `DB_NAME`           | 数据库名                          | auroravault              |
 | `DB_USER`           | 数据库用户                        | postgres                 |
 | `DB_PASSWORD`       | 数据库密码                        | -                        |
 | `CELERY_BROKER_URL` | Celery消息代理                    | redis://localhost:6379/0 |
