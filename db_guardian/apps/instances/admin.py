@@ -8,7 +8,9 @@ from django import forms
 from django.utils.html import format_html
 from django.urls import reverse, path
 from django.utils.safestring import mark_safe
-from django.http import HttpResponseRedirect
+from django.http import HttpResponseRedirect, JsonResponse
+from django.db.models import OuterRef, Subquery
+from django.template.response import TemplateResponse
 from django.shortcuts import get_object_or_404
 from apps.instances.models import MySQLInstance, Database, MonitoringMetrics
 from apps.instances.services import DatabaseSyncService
@@ -244,7 +246,10 @@ class DatabaseAdmin(admin.ModelAdmin):
     search_fields = ['name', 'instance__alias']
     readonly_fields = ['size_mb', 'table_count', 'last_backup_time', 'created_at', 'updated_at']
     actions = ['sync_related_instances_action']
-    change_list_template = 'admin/instances/database/change_list.html'
+    change_list_template = 'admin/instances/database/instance_list.html'
+    
+    def has_add_permission(self, request):
+        return False
     
     fieldsets = (
         ('基本信息', {
@@ -271,42 +276,16 @@ class DatabaseAdmin(admin.ModelAdmin):
     size_display.short_description = '大小'
     size_display.admin_order_field = 'size_mb'
 
-    def get_urls(self):
-        """自定义同步按钮路由"""
-        urls = super().get_urls()
-        custom_urls = [
-            path(
-                'sync-instance/',
-                self.admin_site.admin_view(self.sync_instance_view),
-                name='instances_database_sync_instance'
-            ),
-        ]
-        return custom_urls + urls
-
-    def sync_instance_view(self, request):
-        """同步筛选实例的数据库列表"""
-        instance_id = request.GET.get('instance_id')
-        if not instance_id:
-            messages.error(request, '请先通过筛选选择实例')
-            return HttpResponseRedirect(reverse('admin:instances_database_changelist'))
-
-        instance = get_object_or_404(MySQLInstance, pk=instance_id)
-        try:
-            result = DatabaseSyncService.sync_databases(
-                instance,
-                refresh_stats=True,
-                include_system=False
-            )
-            messages.success(
-                request,
-                f'{instance.alias} 同步完成，新增 {result["created"]} 个，更新 {result["updated"]} 个，删除 {result.get("deleted", 0)} 个'
-            )
-        except Exception as exc:
-            messages.error(request, f'{instance.alias} 同步失败: {exc}')
-
-        return HttpResponseRedirect(
-            reverse('admin:instances_database_changelist') + f'?instance__id__exact={instance_id}'
-        )
+    def changelist_view(self, request, extra_context=None):
+        instances = MySQLInstance.objects.prefetch_related('databases').order_by('alias')
+        context = {
+            **self.admin_site.each_context(request),
+            'title': '数据库',
+            'instances': instances
+        }
+        if extra_context:
+            context.update(extra_context)
+        return TemplateResponse(request, self.change_list_template, context)
 
     @admin.action(description='同步所属实例数据库并刷新统计')
     def sync_related_instances_action(self, request, queryset):
@@ -351,6 +330,7 @@ class MonitoringMetricsAdmin(admin.ModelAdmin):
         'cpu_usage', 'memory_usage', 'disk_usage'
     ]
     date_hierarchy = 'timestamp'
+    change_list_template = 'admin/instances/monitoringmetrics/change_list.html'
     
     def has_add_permission(self, request):
         """禁止手动添加监控数据"""
@@ -359,6 +339,62 @@ class MonitoringMetricsAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         """禁止修改监控数据"""
         return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                'realtime/',
+                self.admin_site.admin_view(self.realtime_view),
+                name='instances_monitoringmetrics_realtime'
+            ),
+        ]
+        return custom_urls + urls
+
+    def changelist_view(self, request, extra_context=None):
+        latest = MonitoringMetrics.objects.filter(
+            instance=OuterRef('pk')
+        ).order_by('-timestamp')
+        instances = MySQLInstance.objects.annotate(
+            last_timestamp=Subquery(latest.values('timestamp')[:1]),
+            last_cpu=Subquery(latest.values('cpu_usage')[:1]),
+            last_memory=Subquery(latest.values('memory_usage')[:1]),
+            last_disk=Subquery(latest.values('disk_usage')[:1])
+        ).order_by('alias')
+        context = {
+            **self.admin_site.each_context(request),
+            'title': '监控指标',
+            'instances': instances,
+            'realtime_url': reverse('admin:instances_monitoringmetrics_realtime')
+        }
+        if extra_context:
+            context.update(extra_context)
+        return TemplateResponse(request, self.change_list_template, context)
+
+    def realtime_view(self, request):
+        latest = MonitoringMetrics.objects.filter(
+            instance=OuterRef('pk')
+        ).order_by('-timestamp')
+        instances = MySQLInstance.objects.annotate(
+            last_timestamp=Subquery(latest.values('timestamp')[:1]),
+            last_cpu=Subquery(latest.values('cpu_usage')[:1]),
+            last_memory=Subquery(latest.values('memory_usage')[:1]),
+            last_disk=Subquery(latest.values('disk_usage')[:1])
+        ).order_by('alias')
+        data = []
+        for inst in instances:
+            data.append({
+                'id': inst.id,
+                'alias': inst.alias,
+                'timestamp': inst.last_timestamp.isoformat() if inst.last_timestamp else '',
+                'cpu': float(inst.last_cpu or 0),
+                'memory': float(inst.last_memory or 0),
+                'disk': float(inst.last_disk or 0),
+            })
+        return JsonResponse({'success': True, 'data': data})
     
     def cpu_usage_display(self, obj):
         """CPU 使用率显示"""

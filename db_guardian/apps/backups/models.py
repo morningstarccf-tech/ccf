@@ -300,6 +300,8 @@ class BackupStrategy(models.Model):
         minute, hour, day_of_month, _month_of_year, day_of_week = parts
         if day_of_month == '*' and day_of_week == '*':
             if hour == '*':
+                if minute.startswith('*/') and minute[2:].isdigit():
+                    return f"每{int(minute[2:])}分钟"
                 if minute.isdigit():
                     return f"每小时 {int(minute):02d} 分"
                 return cron_expr

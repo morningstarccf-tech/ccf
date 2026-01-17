@@ -369,8 +369,11 @@ class BackupExecutor:
         if not executor._is_remote():
             logger.warning("远程备份目录已配置，但未设置 SSH 连接信息")
             return None
-        safe_alias = self.instance.alias.replace(' ', '_')
-        remote_dir = f"{remote_root.rstrip('/')}/{safe_alias}"
+        if remote_root_override:
+            remote_dir = remote_root.rstrip('/')
+        else:
+            safe_alias = self.instance.alias.replace(' ', '_')
+            remote_dir = f"{remote_root.rstrip('/')}/{safe_alias}"
         executor.run(f"mkdir -p {shlex.quote(remote_dir)}")
         return f"{remote_dir}/{filename}"
 
@@ -378,8 +381,11 @@ class BackupExecutor:
         remote_root = (remote_root_override or self.instance.remote_backup_root or '').strip()
         if not remote_root:
             return None
-        safe_alias = self.instance.alias.replace(' ', '_')
-        remote_dir = f"{remote_root.rstrip('/')}/{safe_alias}"
+        if remote_root_override:
+            remote_dir = remote_root.rstrip('/')
+        else:
+            safe_alias = self.instance.alias.replace(' ', '_')
+            remote_dir = f"{remote_root.rstrip('/')}/{safe_alias}"
         return f"{remote_dir}/{filename}"
 
     def _upload_to_remote(
@@ -417,6 +423,8 @@ class BackupExecutor:
             return client.upload(local_path, remote_path)
 
         executor = RemoteExecutor(self.instance)
+        if not executor._is_remote():
+            raise RuntimeError('未配置 SSH 连接信息，无法写入 MySQL 服务器路径')
         remote_path = self._get_remote_backup_path(filename, executor, remote_root_override)
         if not remote_path:
             return None
@@ -722,6 +730,7 @@ class BackupExecutor:
         logger.info(f"备份成功: {final_path}, 大小: {file_size_mb:.2f} MB")
 
         remote_path = None
+        remote_error = None
         if store_remote:
             try:
                 remote_path = self._upload_to_remote(
@@ -731,6 +740,7 @@ class BackupExecutor:
                     remote_config
                 )
             except Exception as exc:
+                remote_error = str(exc)
                 logger.warning(f"远程备份上传失败: {exc}")
 
         object_storage_path = ''
@@ -740,6 +750,12 @@ class BackupExecutor:
                 final_path.name,
                 config=oss_config
             ) or ''
+
+        if store_remote and not remote_path:
+            return {
+                'success': False,
+                'error_message': remote_error or '远程备份上传失败，请检查远程路径与 SSH 配置'
+            }
 
         if not store_local:
             if final_path.exists():

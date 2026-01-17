@@ -1,0 +1,81 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+  <style>
+    .instance-list {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    details.instance-card {
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      background: #fff;
+      padding: 8px 12px;
+    }
+    details.instance-card summary {
+      cursor: pointer;
+      font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .db-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+    }
+    .db-table th,
+    .db-table td {
+      border: 1px solid #e0e0e0;
+      padding: 6px 8px;
+      text-align: left;
+    }
+    .db-empty {
+      padding: 10px 0;
+      color: #666;
+    }
+  </style>
+
+  <div class="instance-list">
+    {% for instance in instances %}
+      <details class="instance-card">
+        <summary>
+          <span>{{ instance.alias }} ({{ instance.host }}:{{ instance.port }})</span>
+          <span>共 {{ instance.databases.count }} 个数据库</span>
+        </summary>
+        {% if instance.databases.all %}
+          <table class="db-table">
+            <thead>
+              <tr>
+                <th>数据库</th>
+                <th>字符集</th>
+                <th>排序规则</th>
+                <th>表数量</th>
+                <th>大小(MB)</th>
+                <th>最后备份</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for db in instance.databases.all %}
+                <tr>
+                  <td>{{ db.name }}</td>
+                  <td>{{ db.charset }}</td>
+                  <td>{{ db.collation }}</td>
+                  <td>{{ db.table_count }}</td>
+                  <td>{{ db.size_mb|floatformat:2 }}</td>
+                  <td>{{ db.last_backup_time|date:"Y-m-d H:i" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <div class="db-empty">暂无数据库</div>
+        {% endif %}
+      </details>
+    {% empty %}
+      <div class="db-empty">暂无 MySQL 实例</div>
+    {% endfor %}
+  </div>
+{% endblock %}

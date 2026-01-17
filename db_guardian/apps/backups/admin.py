@@ -152,6 +152,7 @@ class BackupStrategyAdmin(admin.ModelAdmin):
                 ('weekly', '每周'),
                 ('monthly', '每月'),
                 ('hourly', '每小时'),
+                ('every_minutes', '每N分钟'),
             ],
             initial='daily'
         )
@@ -187,6 +188,13 @@ class BackupStrategyAdmin(admin.ModelAdmin):
             min_value=0,
             max_value=59
         )
+        schedule_every_minutes = forms.IntegerField(
+            label='每隔分钟',
+            required=False,
+            min_value=1,
+            max_value=59,
+            help_text='例如 5 表示每 5 分钟执行'
+        )
 
         class Meta:
             model = BackupStrategy
@@ -213,6 +221,8 @@ class BackupStrategyAdmin(admin.ModelAdmin):
                 self.fields['remote_password'].help_text = '留空则不修改'
             if 'oss_access_key_secret' in self.fields:
                 self.fields['oss_access_key_secret'].help_text = '留空则不修改'
+            if 'remote_storage_path' in self.fields:
+                self.fields['remote_storage_path'].help_text = '填写完整目录，备份文件将直接保存到该目录'
             self._apply_storage_target_initial()
             self._apply_schedule_initial()
 
@@ -239,9 +249,13 @@ class BackupStrategyAdmin(admin.ModelAdmin):
             minute, hour, day_of_month, _month_of_year, day_of_week = parts
             if day_of_month == '*' and day_of_week == '*':
                 if hour == '*':
-                    self.initial['schedule_type'] = 'hourly'
-                    if minute.isdigit():
-                        self.initial['schedule_minute'] = int(minute)
+                    if minute.startswith('*/') and minute[2:].isdigit():
+                        self.initial['schedule_type'] = 'every_minutes'
+                        self.initial['schedule_every_minutes'] = int(minute[2:])
+                    else:
+                        self.initial['schedule_type'] = 'hourly'
+                        if minute.isdigit():
+                            self.initial['schedule_minute'] = int(minute)
                 else:
                     self.initial['schedule_type'] = 'daily'
                     if hour.isdigit() and minute.isdigit():
@@ -294,9 +308,15 @@ class BackupStrategyAdmin(admin.ModelAdmin):
             schedule_weekday = cleaned_data.get('schedule_weekday')
             schedule_day = cleaned_data.get('schedule_day')
             schedule_minute = cleaned_data.get('schedule_minute')
+            schedule_every_minutes = cleaned_data.get('schedule_every_minutes')
             storage_target = cleaned_data.get('storage_target')
 
-            if schedule_type == 'hourly':
+            if schedule_type == 'every_minutes':
+                if not schedule_every_minutes:
+                    self.add_error('schedule_every_minutes', '请填写每隔分钟数')
+                else:
+                    cleaned_data['cron_expression'] = f"*/{schedule_every_minutes} * * * *"
+            elif schedule_type == 'hourly':
                 if schedule_minute is None:
                     self.add_error('schedule_minute', '请选择每小时分钟')
                 else:
@@ -429,6 +449,7 @@ class BackupStrategyAdmin(admin.ModelAdmin):
                 'schedule_weekday',
                 'schedule_day',
                 'schedule_minute',
+                'schedule_every_minutes',
                 'cron_expression',
                 'backup_type',
                 'retention_days',
@@ -483,6 +504,10 @@ class BackupStrategyAdmin(admin.ModelAdmin):
         if not change:  # 新建时
             obj.created_by = request.user
         super().save_model(request, obj, form, change)
+        try:
+            StrategyManager.sync_to_celery_beat()
+        except Exception as exc:
+            messages.error(request, f'同步调度失败: {exc}')
 
     def response_change(self, request, obj):
         """处理立即备份按钮"""
@@ -914,6 +939,8 @@ class BackupOneOffTaskAdmin(admin.ModelAdmin):
                 self.fields['remote_password'].help_text = '留空则不修改'
             if 'oss_access_key_secret' in self.fields:
                 self.fields['oss_access_key_secret'].help_text = '留空则不修改'
+            if 'remote_storage_path' in self.fields:
+                self.fields['remote_storage_path'].help_text = '填写完整目录，备份文件将直接保存到该目录'
             self._apply_storage_target_initial()
 
         def _apply_storage_target_initial(self):
