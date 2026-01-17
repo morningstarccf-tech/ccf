@@ -123,19 +123,6 @@ services:
       redis:
         condition: service_healthy
 
-  # Nginx 反向代理 (可选)
-  nginx:
-    image: nginx:alpine
-    container_name: auroravault_nginx
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d:ro
-      - static_volume:/var/www/staticfiles
-      - media_volume:/var/www/media
-    ports:
-      - "80:80"
-    depends_on:
-      - web
-
 volumes:
   postgres_data:
   redis_data:
