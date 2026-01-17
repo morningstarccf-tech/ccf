@@ -5,6 +5,7 @@
 """
 from celery import shared_task
 from django.utils import timezone
+from django.conf import settings
 from datetime import timedelta
 from pathlib import Path
 import logging
@@ -302,6 +303,58 @@ def cleanup_old_backups(instance_id=None, days=None):
     except Exception as e:
         error_msg = str(e)
         logger.exception(f"清理任务失败: {error_msg}")
+        return {
+            'success': False,
+            'error_message': error_msg
+        }
+
+
+@shared_task
+def cleanup_temp_backups(hours=None):
+    """
+    清理下载/上传产生的临时备份文件
+
+    Args:
+        hours: 过期小时数，默认读取配置或 24 小时
+    """
+    try:
+        if hours is None:
+            hours = getattr(settings, 'BACKUP_TEMP_RETENTION_HOURS', 24)
+        cutoff_time = timezone.now() - timedelta(hours=hours)
+
+        backup_root = Path(getattr(settings, 'BACKUP_STORAGE_PATH', settings.BASE_DIR / 'backups'))
+        temp_dirs = [backup_root / 'tmp', backup_root / 'uploads']
+
+        deleted = 0
+        freed_mb = 0.0
+
+        for temp_dir in temp_dirs:
+            if not temp_dir.exists() or not temp_dir.is_dir():
+                continue
+            for file_path in temp_dir.iterdir():
+                try:
+                    if not file_path.is_file():
+                        continue
+                    mtime = timezone.make_aware(
+                        timezone.datetime.fromtimestamp(file_path.stat().st_mtime)
+                    )
+                    if mtime < cutoff_time:
+                        size_mb = file_path.stat().st_size / (1024 * 1024)
+                        file_path.unlink()
+                        deleted += 1
+                        freed_mb += size_mb
+                except Exception as exc:
+                    logger.warning(f"清理临时文件失败 {file_path}: {exc}")
+
+        logger.info(f"临时文件清理完成: 删除 {deleted} 个，释放 {freed_mb:.2f} MB")
+        return {
+            'success': True,
+            'deleted_count': deleted,
+            'freed_space_mb': round(freed_mb, 2)
+        }
+    except Exception as exc:
+        error_msg = str(exc)
+        logger.exception(f"临时文件清理失败: {error_msg}")
         return {
             'success': False,
             'error_message': error_msg

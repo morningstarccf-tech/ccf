@@ -57,6 +57,12 @@ app.conf.beat_schedule = {
         },
         'kwargs': {'days': 30},
     },
+    # 每小时清理下载/上传产生的临时备份文件
+    'cleanup-temp-backups': {
+        'task': 'backups.cleanup_temp_backups',
+        'schedule': 3600.0,
+        'kwargs': {'hours': 24},
+    },
 }
 
 
