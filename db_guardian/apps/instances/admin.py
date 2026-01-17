@@ -190,20 +190,20 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
         deleted_total = 0
         for instance in queryset:
             try:
-            result = DatabaseSyncService.sync_databases(
-                instance,
-                refresh_stats=True,
-                include_system=False
-            )
-            created_total += result['created']
-            updated_total += result['updated']
-            deleted_total = deleted_total + result.get('deleted', 0)
-        except Exception as exc:
-            messages.error(request, f'{instance.alias} 同步失败: {exc}')
-    messages.success(
-        request,
-        f'同步完成，新增 {created_total} 个，更新 {updated_total} 个，删除 {deleted_total} 个'
-    )
+                result = DatabaseSyncService.sync_databases(
+                    instance,
+                    refresh_stats=True,
+                    include_system=False
+                )
+                created_total += result['created']
+                updated_total += result['updated']
+                deleted_total += result.get('deleted', 0)
+            except Exception as exc:
+                messages.error(request, f'{instance.alias} 同步失败: {exc}')
+        messages.success(
+            request,
+            f'同步完成，新增 {created_total} 个，更新 {updated_total} 个，删除 {deleted_total} 个'
+        )
 
     @admin.action(description='立即执行备份')
     def trigger_backup_action(self, request, queryset):
@@ -317,20 +317,20 @@ class DatabaseAdmin(admin.ModelAdmin):
         deleted_total = 0
         for instance in instances:
             try:
-            result = DatabaseSyncService.sync_databases(
-                instance,
-                refresh_stats=True,
-                include_system=False
-            )
-            created_total += result['created']
-            updated_total += result['updated']
-            deleted_total = deleted_total + result.get('deleted', 0)
-        except Exception as exc:
-            messages.error(request, f'{instance.alias} 同步失败: {exc}')
-    messages.success(
-        request,
-        f'同步完成，新增 {created_total} 个，更新 {updated_total} 个，删除 {deleted_total} 个'
-    )
+                result = DatabaseSyncService.sync_databases(
+                    instance,
+                    refresh_stats=True,
+                    include_system=False
+                )
+                created_total += result['created']
+                updated_total += result['updated']
+                deleted_total += result.get('deleted', 0)
+            except Exception as exc:
+                messages.error(request, f'{instance.alias} 同步失败: {exc}')
+        messages.success(
+            request,
+            f'同步完成，新增 {created_total} 个，更新 {updated_total} 个，删除 {deleted_total} 个'
+        )
 
 
 @admin.register(MonitoringMetrics)
