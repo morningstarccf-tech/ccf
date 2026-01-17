@@ -219,7 +219,7 @@ class BackupRecordSerializer(serializers.ModelSerializer):
     backup_type_display = serializers.CharField(source='get_backup_type_display', read_only=True)
     duration_seconds = serializers.SerializerMethodField()
     download_url = serializers.SerializerMethodField()
-    base_backup_id = serializers.IntegerField(source='base_backup_id', read_only=True)
+    base_backup_id = serializers.IntegerField(read_only=True)
     
     class Meta:
         model = BackupRecord
