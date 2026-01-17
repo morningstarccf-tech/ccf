@@ -12,6 +12,118 @@ import os
 
 logger = logging.getLogger(__name__)
 
+def _execute_backup_core(
+    strategy_id=None,
+    instance_id=None,
+    databases=None,
+    database_name=None,
+    user_id=None,
+    backup_type=None,
+    compress=None
+):
+    from apps.backups.models import BackupStrategy, BackupRecord
+    from apps.instances.models import MySQLInstance
+    from apps.backups.services import BackupExecutor
+
+    backup_record = None
+
+    # 1. 获取实例和策略
+    if strategy_id:
+        strategy = BackupStrategy.objects.select_related('instance').get(id=strategy_id)
+        instance = strategy.instance
+        databases = strategy.databases or ([database_name] if database_name else None)
+        compress = strategy.compress
+        storage_path = strategy.get_storage_path()
+        backup_type = strategy.backup_type
+    elif instance_id:
+        instance = MySQLInstance.objects.get(id=instance_id)
+        strategy = None
+        databases = databases or ([database_name] if database_name else None)
+        compress = True if compress is None else compress
+        storage_path = None
+        backup_type = backup_type or 'full'
+    else:
+        raise ValueError("必须提供 strategy_id 或 instance_id")
+
+    base_backup = None
+    if backup_type == 'incremental':
+        base_backup = BackupRecord.objects.filter(
+            instance=instance,
+            backup_type__in=['hot', 'incremental'],
+            status='success'
+        ).order_by('-created_at').first()
+        if not base_backup:
+            raise Exception("增量备份需要先有成功的热备/增量备份作为基准")
+
+    # 2. 创建备份记录
+    backup_record = BackupRecord.objects.create(
+        instance=instance,
+        strategy=strategy,
+        database_name=database_name or '',
+        backup_type=backup_type,
+        status='running',
+        start_time=timezone.now(),
+        created_by_id=user_id,
+        base_backup=base_backup,
+        remote_path='',
+        object_storage_path=''
+    )
+
+    logger.info(f"开始备份任务: 记录ID={backup_record.id}, 实例={instance.alias}")
+
+    # 3. 执行备份
+    executor = BackupExecutor(instance)
+
+    # 如果有多个数据库，分别备份
+    if databases and len(databases) > 0:
+        for db in databases:
+            result = executor.execute_backup(
+                database_name=db,
+                compress=compress,
+                storage_path=storage_path,
+                backup_type=backup_type,
+                base_backup=base_backup
+            )
+
+            if not result['success']:
+                raise Exception(f"数据库 {db} 备份失败: {result.get('error_message')}")
+    else:
+        # 备份所有数据库
+        result = executor.execute_backup(
+            database_name=database_name,
+            compress=compress,
+            storage_path=storage_path,
+            backup_type=backup_type,
+            base_backup=base_backup
+        )
+
+        if not result['success']:
+            raise Exception(result.get('error_message'))
+
+    # 4. 更新备份记录为成功
+    backup_record.status = 'success'
+    backup_record.end_time = timezone.now()
+    backup_record.file_path = result['file_path']
+    backup_record.file_size_mb = result['file_size_mb']
+    backup_record.remote_path = result.get('remote_path', '')
+    backup_record.object_storage_path = result.get('object_storage_path', '')
+    backup_record.save()
+
+    logger.info(f"备份任务完成: 记录ID={backup_record.id}")
+
+    # 5. 触发清理任务（可选）
+    if strategy and strategy.retention_days:
+        cleanup_old_backups.delay(instance_id=instance.id, days=strategy.retention_days)
+
+    return backup_record, {
+        'success': True,
+        'backup_id': backup_record.id,
+        'file_path': result['file_path'],
+        'file_size_mb': result['file_size_mb'],
+        'remote_path': result.get('remote_path', ''),
+        'object_storage_path': result.get('object_storage_path', '')
+    }
+
 
 @shared_task(bind=True, max_retries=3)
 def execute_backup_task(self, strategy_id=None, instance_id=None,
@@ -30,110 +142,18 @@ def execute_backup_task(self, strategy_id=None, instance_id=None,
     Returns:
         dict: 备份结果
     """
-    from apps.backups.models import BackupStrategy, BackupRecord
-    from apps.instances.models import MySQLInstance
-    from apps.backups.services import BackupExecutor
-    from apps.authentication.models import User
-    
     backup_record = None
     
     try:
-        # 1. 获取实例和策略
-        if strategy_id:
-            strategy = BackupStrategy.objects.select_related('instance').get(id=strategy_id)
-            instance = strategy.instance
-            databases = strategy.databases or [database_name] if database_name else None
-            compress = strategy.compress
-            storage_path = strategy.get_storage_path()
-            backup_type = strategy.backup_type
-        elif instance_id:
-            instance = MySQLInstance.objects.get(id=instance_id)
-            strategy = None
-            databases = [database_name] if database_name else None
-            compress = True if compress is None else compress
-            storage_path = None
-            backup_type = backup_type or 'full'
-        else:
-            raise ValueError("必须提供 strategy_id 或 instance_id")
-
-        base_backup = None
-        if backup_type == 'incremental':
-            base_backup = BackupRecord.objects.filter(
-                instance=instance,
-                backup_type__in=['hot', 'incremental'],
-                status='success'
-            ).order_by('-created_at').first()
-            if not base_backup:
-                raise Exception("增量备份需要先有成功的热备/增量备份作为基准")
-        
-        # 2. 创建备份记录
-        backup_record = BackupRecord.objects.create(
-            instance=instance,
-            strategy=strategy,
-            database_name=database_name or '',
+        backup_record, result = _execute_backup_core(
+            strategy_id=strategy_id,
+            instance_id=instance_id,
+            database_name=database_name,
+            user_id=user_id,
             backup_type=backup_type,
-            status='running',
-            start_time=timezone.now(),
-            created_by_id=user_id,
-            base_backup=base_backup,
-            remote_path='',
-            object_storage_path=''
+            compress=compress
         )
-        
-        logger.info(f"开始备份任务: 记录ID={backup_record.id}, 实例={instance.alias}")
-        
-        # 3. 执行备份
-        executor = BackupExecutor(instance)
-        
-        # 如果有多个数据库，分别备份
-        if databases and len(databases) > 0:
-            for db in databases:
-                result = executor.execute_backup(
-                    database_name=db,
-                    compress=compress,
-                    storage_path=storage_path,
-                    backup_type=backup_type,
-                    base_backup=base_backup
-                )
-                
-                if not result['success']:
-                    raise Exception(f"数据库 {db} 备份失败: {result.get('error_message')}")
-        else:
-            # 备份所有数据库
-            result = executor.execute_backup(
-                database_name=database_name,
-                compress=compress,
-                storage_path=storage_path,
-                backup_type=backup_type,
-                base_backup=base_backup
-            )
-            
-            if not result['success']:
-                raise Exception(result.get('error_message'))
-        
-        # 4. 更新备份记录为成功
-        backup_record.status = 'success'
-        backup_record.end_time = timezone.now()
-        backup_record.file_path = result['file_path']
-        backup_record.file_size_mb = result['file_size_mb']
-        backup_record.remote_path = result.get('remote_path', '')
-        backup_record.object_storage_path = result.get('object_storage_path', '')
-        backup_record.save()
-        
-        logger.info(f"备份任务完成: 记录ID={backup_record.id}")
-        
-        # 5. 触发清理任务（可选）
-        if strategy and strategy.retention_days:
-            cleanup_old_backups.delay(instance_id=instance.id, days=strategy.retention_days)
-        
-        return {
-            'success': True,
-            'backup_id': backup_record.id,
-            'file_path': result['file_path'],
-            'file_size_mb': result['file_size_mb'],
-            'remote_path': result.get('remote_path', ''),
-            'object_storage_path': result.get('object_storage_path', '')
-        }
+        return result
         
     except Exception as e:
         error_msg = str(e)
@@ -155,6 +175,46 @@ def execute_backup_task(self, strategy_id=None, instance_id=None,
             'error_message': error_msg
         }
 
+
+@shared_task(bind=True, max_retries=3)
+def execute_oneoff_backup_task(self, task_id):
+    from apps.backups.models import BackupOneOffTask
+
+    task = BackupOneOffTask.objects.select_related('instance').filter(id=task_id).first()
+    if not task:
+        return {'success': False, 'error_message': '定时任务不存在'}
+
+    task.status = 'running'
+    task.started_at = timezone.now()
+    task.save(update_fields=['status', 'started_at'])
+
+    backup_record = None
+    try:
+        backup_record, result = _execute_backup_core(
+            instance_id=task.instance_id,
+            databases=task.databases or None,
+            user_id=task.created_by_id,
+            backup_type=task.backup_type,
+            compress=task.compress
+        )
+        task.status = 'success'
+        task.finished_at = timezone.now()
+        task.backup_record = backup_record
+        task.error_message = ''
+        task.save(update_fields=['status', 'finished_at', 'backup_record', 'error_message'])
+        return result
+    except Exception as exc:
+        error_msg = str(exc)
+        task.status = 'failed'
+        task.finished_at = timezone.now()
+        task.error_message = error_msg
+        if backup_record:
+            task.backup_record = backup_record
+        task.save(update_fields=['status', 'finished_at', 'backup_record', 'error_message'])
+        logger.exception(f"定时备份任务失败: {error_msg}")
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc, countdown=60 * (self.request.retries + 1))
+        return {'success': False, 'error_message': error_msg}
 
 @shared_task
 def cleanup_old_backups(instance_id=None, days=None):

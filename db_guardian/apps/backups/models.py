@@ -295,3 +295,126 @@ class BackupRecord(models.Model):
             return (self.end_time - self.start_time).total_seconds()
         return None
 
+
+class BackupOneOffTask(models.Model):
+    """
+    定时备份任务（一次性）
+    """
+
+    STATUS_CHOICES = [
+        ('pending', _('等待中')),
+        ('running', _('执行中')),
+        ('success', _('成功')),
+        ('failed', _('失败')),
+        ('canceled', _('已取消')),
+    ]
+
+    name = models.CharField(
+        _('任务名称'),
+        max_length=120,
+        help_text=_('一次性定时任务名称')
+    )
+
+    instance = models.ForeignKey(
+        'instances.MySQLInstance',
+        on_delete=models.CASCADE,
+        related_name='oneoff_backup_tasks',
+        verbose_name=_('MySQL 实例'),
+        help_text=_('要备份的 MySQL 实例')
+    )
+
+    databases = models.JSONField(
+        _('数据库列表'),
+        blank=True,
+        null=True,
+        help_text=_('要备份的数据库列表，为空表示备份所有数据库')
+    )
+
+    backup_type = models.CharField(
+        _('备份类型'),
+        max_length=20,
+        choices=BackupStrategy.BACKUP_TYPE_CHOICES,
+        default='full',
+        help_text=_('备份类型：全量、增量、热备或冷备')
+    )
+
+    run_at = models.DateTimeField(
+        _('执行时间'),
+        help_text=_('任务计划执行时间')
+    )
+
+    compress = models.BooleanField(
+        _('是否压缩'),
+        default=True,
+        help_text=_('是否压缩备份文件')
+    )
+
+    status = models.CharField(
+        _('状态'),
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending',
+        help_text=_('任务执行状态')
+    )
+
+    task_id = models.CharField(
+        _('Celery 任务ID'),
+        max_length=100,
+        blank=True,
+        help_text=_('Celery 调度的任务ID')
+    )
+
+    backup_record = models.ForeignKey(
+        BackupRecord,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='oneoff_tasks',
+        verbose_name=_('关联备份记录')
+    )
+
+    error_message = models.TextField(
+        _('错误信息'),
+        blank=True,
+        help_text=_('失败原因')
+    )
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_oneoff_tasks',
+        verbose_name=_('创建者')
+    )
+
+    created_at = models.DateTimeField(
+        _('创建时间'),
+        auto_now_add=True
+    )
+
+    started_at = models.DateTimeField(
+        _('开始时间'),
+        null=True,
+        blank=True
+    )
+
+    finished_at = models.DateTimeField(
+        _('结束时间'),
+        null=True,
+        blank=True
+    )
+
+    class Meta:
+        db_table = 'backup_oneoff_task'
+        verbose_name = _('定时任务')
+        verbose_name_plural = _('定时任务')
+        ordering = ['-run_at']
+        indexes = [
+            models.Index(fields=['status'], name='idx_oneoff_status'),
+            models.Index(fields=['instance', 'run_at'], name='idx_oneoff_instance_time'),
+        ]
+
+    def __str__(self):
+        return f"{self.name} - {self.instance.alias}"
+

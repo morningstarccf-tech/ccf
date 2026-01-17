@@ -8,11 +8,12 @@ from django.contrib import admin, messages
 from django.http import HttpResponseRedirect
 from django import forms
 from django.utils.html import format_html
+from django.utils import timezone
 from django.urls import reverse, path
 from django.shortcuts import get_object_or_404
 from pathlib import Path
-from apps.backups.models import BackupStrategy, BackupRecord
-from apps.backups.tasks import execute_backup_task
+from apps.backups.models import BackupStrategy, BackupRecord, BackupOneOffTask
+from apps.backups.tasks import execute_backup_task, execute_oneoff_backup_task
 from apps.backups.services import StrategyManager
 from apps.backups.services import RestoreExecutor
 
@@ -351,3 +352,140 @@ class BackupRecordAdmin(admin.ModelAdmin):
             messages.error(request, result.get('error_message', '恢复失败'))
 
         return HttpResponseRedirect(redirect_url)
+
+
+@admin.register(BackupOneOffTask)
+class BackupOneOffTaskAdmin(admin.ModelAdmin):
+    """
+    定时任务 Admin 配置（一次性执行）
+    """
+
+    class BackupOneOffTaskForm(forms.ModelForm):
+        databases = forms.CharField(
+            label='数据库列表',
+            required=False,
+            widget=forms.Textarea(attrs={'rows': 2}),
+            help_text='支持 JSON 数组或逗号分隔，如 ["db1","db2"] 或 db1,db2'
+        )
+
+        class Meta:
+            model = BackupOneOffTask
+            fields = '__all__'
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            if self.instance and self.instance.pk and self.instance.databases:
+                if isinstance(self.instance.databases, list):
+                    self.fields['databases'].initial = ','.join(self.instance.databases)
+                else:
+                    self.fields['databases'].initial = str(self.instance.databases)
+
+        def clean_databases(self):
+            raw = self.cleaned_data.get('databases')
+            if raw is None or raw == '':
+                return []
+            if isinstance(raw, list):
+                return raw
+
+            text = str(raw).strip()
+            if not text:
+                return []
+
+            try:
+                value = json.loads(text)
+                if isinstance(value, list):
+                    return [str(item).strip() for item in value if str(item).strip()]
+                if isinstance(value, str):
+                    text = value
+                else:
+                    raise forms.ValidationError('数据库列表必须是 JSON 数组或逗号分隔字符串')
+            except json.JSONDecodeError:
+                pass
+
+            parts = [part.strip() for part in text.replace('\n', ',').split(',')]
+            return [part for part in parts if part]
+
+        def clean(self):
+            cleaned_data = super().clean()
+            backup_type = cleaned_data.get('backup_type')
+            databases = cleaned_data.get('databases')
+            if backup_type in ['hot', 'cold', 'incremental'] and databases:
+                self.add_error('databases', '热备/冷备/增量备份不支持指定数据库列表')
+            return cleaned_data
+
+    form = BackupOneOffTaskForm
+    change_form_template = 'admin/backups/backuponeofftask/change_form.html'
+
+    list_display = [
+        'id', 'name', 'instance', 'backup_type', 'run_at',
+        'status_badge', 'created_at', 'started_at', 'finished_at'
+    ]
+
+    list_filter = ['status', 'backup_type', 'run_at', 'created_at']
+    search_fields = ['name', 'instance__alias']
+
+    readonly_fields = [
+        'task_id', 'backup_record', 'status', 'error_message',
+        'created_by', 'created_at', 'started_at', 'finished_at'
+    ]
+
+    fieldsets = (
+        ('任务信息', {
+            'fields': ('name', 'instance', 'databases', 'backup_type', 'compress', 'run_at')
+        }),
+        ('执行状态', {
+            'fields': ('status', 'task_id', 'backup_record', 'error_message', 'started_at', 'finished_at')
+        }),
+        ('元数据', {
+            'fields': ('created_by', 'created_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    def status_badge(self, obj):
+        color_map = {
+            'pending': 'gray',
+            'running': 'blue',
+            'success': 'green',
+            'failed': 'red',
+            'canceled': 'orange'
+        }
+        color = color_map.get(obj.status, 'gray')
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">{}</span>',
+            color,
+            obj.get_status_display()
+        )
+    status_badge.short_description = '状态'
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
+    def response_add(self, request, obj, post_url_continue=None):
+        if "_run_now" in request.POST:
+            task = execute_oneoff_backup_task.delay(obj.id)
+            obj.task_id = task.id
+            obj.run_at = obj.run_at or timezone.now()
+            obj.save(update_fields=['task_id', 'run_at'])
+            messages.success(request, f'已创建立即执行任务，任务ID: {task.id}')
+            return HttpResponseRedirect(reverse('admin:backups_backuponeofftask_change', args=[obj.id]))
+
+        if obj.status == 'pending' and not obj.task_id:
+            task = execute_oneoff_backup_task.apply_async(args=[obj.id], eta=obj.run_at)
+            obj.task_id = task.id
+            obj.save(update_fields=['task_id'])
+            messages.success(request, f'已创建定时任务，任务ID: {task.id}')
+        return super().response_add(request, obj, post_url_continue)
+
+    def response_change(self, request, obj):
+        if "_run_now" in request.POST:
+            task = execute_oneoff_backup_task.delay(obj.id)
+            obj.task_id = task.id
+            obj.run_at = timezone.now()
+            obj.status = 'pending'
+            obj.save(update_fields=['task_id', 'run_at', 'status'])
+            messages.success(request, f'已创建立即执行任务，任务ID: {task.id}')
+            return HttpResponseRedirect(request.path)
+        return super().response_change(request, obj)
