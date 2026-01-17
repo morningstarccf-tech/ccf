@@ -19,7 +19,12 @@ def _execute_backup_core(
     database_name=None,
     user_id=None,
     backup_type=None,
-    compress=None
+    compress=None,
+    storage_path=None,
+    store_local=True,
+    store_remote=False,
+    store_oss=False,
+    remote_storage_path=None
 ):
     from apps.backups.models import BackupStrategy, BackupRecord
     from apps.instances.models import MySQLInstance
@@ -33,14 +38,18 @@ def _execute_backup_core(
         instance = strategy.instance
         databases = strategy.databases or ([database_name] if database_name else None)
         compress = strategy.compress
-        storage_path = strategy.get_storage_path()
+        storage_path = strategy.storage_path or None
         backup_type = strategy.backup_type
+        store_local = strategy.store_local
+        store_remote = strategy.store_remote
+        store_oss = strategy.store_oss
+        remote_storage_path = strategy.remote_storage_path or None
     elif instance_id:
         instance = MySQLInstance.objects.get(id=instance_id)
         strategy = None
         databases = databases or ([database_name] if database_name else None)
         compress = True if compress is None else compress
-        storage_path = None
+        storage_path = storage_path
         backup_type = backup_type or 'full'
     else:
         raise ValueError("必须提供 strategy_id 或 instance_id")
@@ -82,7 +91,11 @@ def _execute_backup_core(
                 compress=compress,
                 storage_path=storage_path,
                 backup_type=backup_type,
-                base_backup=base_backup
+                base_backup=base_backup,
+                store_local=store_local,
+                store_remote=store_remote,
+                store_oss=store_oss,
+                remote_storage_path=remote_storage_path
             )
 
             if not result['success']:
@@ -94,7 +107,11 @@ def _execute_backup_core(
             compress=compress,
             storage_path=storage_path,
             backup_type=backup_type,
-            base_backup=base_backup
+            base_backup=base_backup,
+            store_local=store_local,
+            store_remote=store_remote,
+            store_oss=store_oss,
+            remote_storage_path=remote_storage_path
         )
 
         if not result['success']:
@@ -195,7 +212,12 @@ def execute_oneoff_backup_task(self, task_id):
             databases=task.databases or None,
             user_id=task.created_by_id,
             backup_type=task.backup_type,
-            compress=task.compress
+            compress=task.compress,
+            storage_path=task.storage_path or None,
+            store_local=task.store_local,
+            store_remote=task.store_remote,
+            store_oss=task.store_oss,
+            remote_storage_path=task.remote_storage_path or None
         )
         task.status = 'success'
         task.finished_at = timezone.now()

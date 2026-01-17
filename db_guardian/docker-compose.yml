@@ -42,6 +42,7 @@ services:
       - static_volume:/app/staticfiles
       - media_volume:/app/media
       - ./backup:/app/backups
+      - ./backup:/root/backup
     ports:
       - "8000:8000"
     environment:
@@ -79,6 +80,7 @@ services:
       - .:/app
       - media_volume:/app/media
       - ./backup:/app/backups
+      - ./backup:/root/backup
     environment:
       - DJANGO_ENV=production
       - SECRET_KEY=${SECRET_KEY}

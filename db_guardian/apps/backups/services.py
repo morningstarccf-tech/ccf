@@ -144,8 +144,13 @@ class BackupExecutor:
         """
         self.instance = instance
 
-    def _get_remote_backup_path(self, filename: str, executor: RemoteExecutor) -> str | None:
-        remote_root = (self.instance.remote_backup_root or '').strip()
+    def _get_remote_backup_path(
+        self,
+        filename: str,
+        executor: RemoteExecutor,
+        remote_root_override: str | None = None
+    ) -> str | None:
+        remote_root = (remote_root_override or self.instance.remote_backup_root or '').strip()
         if not remote_root:
             return None
         if not executor._is_remote():
@@ -156,9 +161,14 @@ class BackupExecutor:
         executor.run(f"mkdir -p {shlex.quote(remote_dir)}")
         return f"{remote_dir}/{filename}"
 
-    def _upload_to_remote(self, local_path: Path, filename: str) -> str | None:
+    def _upload_to_remote(
+        self,
+        local_path: Path,
+        filename: str,
+        remote_root_override: str | None = None
+    ) -> str | None:
         executor = RemoteExecutor(self.instance)
-        remote_path = self._get_remote_backup_path(filename, executor)
+        remote_path = self._get_remote_backup_path(filename, executor, remote_root_override)
         if not remote_path:
             return None
         executor.upload(local_path, remote_path)
@@ -172,8 +182,18 @@ class BackupExecutor:
             logger.warning(f"OSS 上传失败: {exc}")
             return None
     
-    def execute_backup(self, database_name=None, compress=True, storage_path=None,
-                       backup_type='full', base_backup=None):
+    def execute_backup(
+        self,
+        database_name=None,
+        compress=True,
+        storage_path=None,
+        backup_type='full',
+        base_backup=None,
+        store_local=True,
+        store_remote=False,
+        store_oss=False,
+        remote_storage_path=None
+    ):
         """
         执行备份
         
@@ -216,17 +236,49 @@ class BackupExecutor:
             
             if backup_type in ['full']:
                 return self._execute_logical_backup(
-                    database_name, compress, storage_path, filename
+                    database_name,
+                    compress,
+                    storage_path,
+                    filename,
+                    store_local,
+                    store_remote,
+                    store_oss,
+                    remote_storage_path
                 )
 
             if backup_type in ['hot']:
-                return self._execute_hot_backup(storage_path, timestamp, compress)
+                return self._execute_hot_backup(
+                    storage_path,
+                    timestamp,
+                    compress,
+                    store_local,
+                    store_remote,
+                    store_oss,
+                    remote_storage_path
+                )
 
             if backup_type in ['cold']:
-                return self._execute_cold_backup(storage_path, timestamp, compress)
+                return self._execute_cold_backup(
+                    storage_path,
+                    timestamp,
+                    compress,
+                    store_local,
+                    store_remote,
+                    store_oss,
+                    remote_storage_path
+                )
 
             if backup_type in ['incremental']:
-                return self._execute_incremental_backup(storage_path, timestamp, compress, base_backup)
+                return self._execute_incremental_backup(
+                    storage_path,
+                    timestamp,
+                    compress,
+                    base_backup,
+                    store_local,
+                    store_remote,
+                    store_oss,
+                    remote_storage_path
+                )
 
             return {
                 'success': False,
@@ -352,7 +404,17 @@ class BackupExecutor:
         
         return cmd
 
-    def _execute_logical_backup(self, database_name, compress, storage_path, filename):
+    def _execute_logical_backup(
+        self,
+        database_name,
+        compress,
+        storage_path,
+        filename,
+        store_local,
+        store_remote,
+        store_oss,
+        remote_storage_path
+    ):
         """执行逻辑备份（mysqldump）"""
         dump_bin = self._get_dump_binary()
         if not dump_bin:
@@ -399,17 +461,28 @@ class BackupExecutor:
         logger.info(f"备份成功: {final_path}, 大小: {file_size_mb:.2f} MB")
 
         remote_path = None
-        if self.instance.remote_backup_root:
+        if store_remote:
             try:
-                remote_path = self._upload_to_remote(final_path, final_path.name)
+                remote_path = self._upload_to_remote(
+                    final_path,
+                    final_path.name,
+                    remote_storage_path
+                )
             except Exception as exc:
                 logger.warning(f"远程备份上传失败: {exc}")
 
-        object_storage_path = self._upload_to_object_storage(final_path, final_path.name)
+        object_storage_path = ''
+        if store_oss:
+            object_storage_path = self._upload_to_object_storage(final_path, final_path.name) or ''
+
+        if not store_local:
+            if final_path.exists():
+                final_path.unlink()
+            final_path = Path('')
 
         return {
             'success': True,
-            'file_path': str(final_path),
+            'file_path': str(final_path) if str(final_path) else '',
             'file_size_mb': round(file_size_mb, 2),
             'remote_path': remote_path or '',
             'object_storage_path': object_storage_path or ''
@@ -460,7 +533,16 @@ class BackupExecutor:
             return name[:-4]
         return Path(name).stem
 
-    def _execute_hot_backup(self, storage_path, timestamp, compress):
+    def _execute_hot_backup(
+        self,
+        storage_path,
+        timestamp,
+        compress,
+        store_local,
+        store_remote,
+        store_oss,
+        remote_storage_path
+    ):
         """执行热备（xtrabackup 全量）"""
         if not self.instance.data_dir:
             return {'success': False, 'error_message': '未配置实例数据目录'}
@@ -481,7 +563,13 @@ class BackupExecutor:
             return {'success': False, 'error_message': err or '热备失败'}
 
         remote_archive = self._archive_remote_dir(executor, remote_dir, compress)
-        remote_keep_path = self._get_remote_backup_path(archive_name, executor)
+        remote_keep_path = None
+        if store_remote:
+            remote_keep_path = self._get_remote_backup_path(
+                archive_name,
+                executor,
+                remote_storage_path
+            )
         download_source = remote_archive
 
         if remote_keep_path:
@@ -497,16 +585,32 @@ class BackupExecutor:
             executor.run(f"rm -f {shlex.quote(remote_archive)}")
 
         file_size_mb = local_path.stat().st_size / (1024 * 1024)
-        object_storage_path = self._upload_to_object_storage(local_path, local_path.name)
+        object_storage_path = ''
+        if store_oss:
+            object_storage_path = self._upload_to_object_storage(local_path, local_path.name) or ''
+
+        if not store_local and local_path.exists():
+            local_path.unlink()
+            local_path = Path('')
         return {
             'success': True,
-            'file_path': str(local_path),
+            'file_path': str(local_path) if str(local_path) else '',
             'file_size_mb': round(file_size_mb, 2),
             'remote_path': remote_keep_path or '',
             'object_storage_path': object_storage_path or ''
         }
 
-    def _execute_incremental_backup(self, storage_path, timestamp, compress, base_backup):
+    def _execute_incremental_backup(
+        self,
+        storage_path,
+        timestamp,
+        compress,
+        base_backup,
+        store_local,
+        store_remote,
+        store_oss,
+        remote_storage_path
+    ):
         """执行增量备份（xtrabackup 增量）"""
         if not base_backup or not base_backup.file_path:
             return {'success': False, 'error_message': '增量备份缺少基准备份'}
@@ -540,7 +644,13 @@ class BackupExecutor:
             return {'success': False, 'error_message': err or '增量备份失败'}
 
         remote_archive = self._archive_remote_dir(executor, remote_dir, compress)
-        remote_keep_path = self._get_remote_backup_path(archive_name, executor)
+        remote_keep_path = None
+        if store_remote:
+            remote_keep_path = self._get_remote_backup_path(
+                archive_name,
+                executor,
+                remote_storage_path
+            )
         download_source = remote_archive
 
         if remote_keep_path:
@@ -559,16 +669,31 @@ class BackupExecutor:
             executor.run(f"rm -f {shlex.quote(remote_archive)}")
 
         file_size_mb = local_path.stat().st_size / (1024 * 1024)
-        object_storage_path = self._upload_to_object_storage(local_path, local_path.name)
+        object_storage_path = ''
+        if store_oss:
+            object_storage_path = self._upload_to_object_storage(local_path, local_path.name) or ''
+
+        if not store_local and local_path.exists():
+            local_path.unlink()
+            local_path = Path('')
         return {
             'success': True,
-            'file_path': str(local_path),
+            'file_path': str(local_path) if str(local_path) else '',
             'file_size_mb': round(file_size_mb, 2),
             'remote_path': remote_keep_path or '',
             'object_storage_path': object_storage_path or ''
         }
 
-    def _execute_cold_backup(self, storage_path, timestamp, compress):
+    def _execute_cold_backup(
+        self,
+        storage_path,
+        timestamp,
+        compress,
+        store_local,
+        store_remote,
+        store_oss,
+        remote_storage_path
+    ):
         """执行冷备（停库复制数据目录）"""
         if not self.instance.data_dir:
             return {'success': False, 'error_message': '未配置实例数据目录'}
@@ -608,7 +733,13 @@ class BackupExecutor:
         finally:
             executor.run(start_cmd, timeout=600)
 
-        remote_keep_path = self._get_remote_backup_path(archive_name, executor)
+        remote_keep_path = None
+        if store_remote:
+            remote_keep_path = self._get_remote_backup_path(
+                archive_name,
+                executor,
+                remote_storage_path
+            )
         download_source = remote_archive
         if remote_keep_path:
             move_cmd = f"mv {shlex.quote(remote_archive)} {shlex.quote(remote_keep_path)}"
@@ -622,10 +753,16 @@ class BackupExecutor:
             executor.run(f"rm -f {shlex.quote(remote_archive)}")
 
         file_size_mb = local_path.stat().st_size / (1024 * 1024)
-        object_storage_path = self._upload_to_object_storage(local_path, local_path.name)
+        object_storage_path = ''
+        if store_oss:
+            object_storage_path = self._upload_to_object_storage(local_path, local_path.name) or ''
+
+        if not store_local and local_path.exists():
+            local_path.unlink()
+            local_path = Path('')
         return {
             'success': True,
-            'file_path': str(local_path),
+            'file_path': str(local_path) if str(local_path) else '',
             'file_size_mb': round(file_size_mb, 2),
             'remote_path': remote_keep_path or '',
             'object_storage_path': object_storage_path or ''

@@ -45,6 +45,19 @@ class BackupStrategyAdmin(admin.ModelAdmin):
             required=False,
             widget=forms.HiddenInput()
         )
+        store_local = forms.BooleanField(
+            label='本地保存',
+            required=False,
+            initial=True
+        )
+        store_remote = forms.BooleanField(
+            label='远程保存',
+            required=False
+        )
+        store_oss = forms.BooleanField(
+            label='云存储保存',
+            required=False
+        )
         databases = forms.CharField(
             label='数据库列表',
             required=False,
@@ -201,6 +214,19 @@ class BackupStrategyAdmin(admin.ModelAdmin):
 
             backup_type = cleaned_data.get('backup_type')
             databases = cleaned_data.get('databases')
+            store_local = cleaned_data.get('store_local')
+            store_remote = cleaned_data.get('store_remote')
+            store_oss = cleaned_data.get('store_oss')
+            remote_storage_path = cleaned_data.get('remote_storage_path')
+            instance = cleaned_data.get('instance')
+
+            if not (store_local or store_remote or store_oss):
+                self.add_error('store_local', '请至少选择一种存储位置')
+
+            if store_remote and not remote_storage_path:
+                if not (instance and instance.remote_backup_root):
+                    self.add_error('remote_storage_path', '请填写远程存储路径或在实例中配置远程备份目录')
+
             if backup_type in ['hot', 'cold', 'incremental'] and databases:
                 self.add_error('databases', '热备/冷备/增量备份不支持指定数据库列表')
             return cleaned_data
@@ -245,7 +271,14 @@ class BackupStrategyAdmin(admin.ModelAdmin):
             )
         }),
         ('存储设置', {
-            'fields': ('storage_path', 'is_enabled')
+            'fields': (
+                'storage_path',
+                'store_local',
+                'store_remote',
+                'store_oss',
+                'remote_storage_path',
+                'is_enabled'
+            )
         }),
         ('元数据', {
             'fields': ('created_by', 'created_at', 'updated_at'),
@@ -510,6 +543,19 @@ class BackupOneOffTaskAdmin(admin.ModelAdmin):
             widget=forms.Textarea(attrs={'rows': 2}),
             help_text='支持 JSON 数组或逗号分隔，如 ["db1","db2"] 或 db1,db2'
         )
+        store_local = forms.BooleanField(
+            label='本地保存',
+            required=False,
+            initial=True
+        )
+        store_remote = forms.BooleanField(
+            label='远程保存',
+            required=False
+        )
+        store_oss = forms.BooleanField(
+            label='云存储保存',
+            required=False
+        )
 
         class Meta:
             model = BackupOneOffTask
@@ -552,6 +598,19 @@ class BackupOneOffTaskAdmin(admin.ModelAdmin):
             cleaned_data = super().clean()
             backup_type = cleaned_data.get('backup_type')
             databases = cleaned_data.get('databases')
+            store_local = cleaned_data.get('store_local')
+            store_remote = cleaned_data.get('store_remote')
+            store_oss = cleaned_data.get('store_oss')
+            remote_storage_path = cleaned_data.get('remote_storage_path')
+            instance = cleaned_data.get('instance')
+
+            if not (store_local or store_remote or store_oss):
+                self.add_error('store_local', '请至少选择一种存储位置')
+
+            if store_remote and not remote_storage_path:
+                if not (instance and instance.remote_backup_root):
+                    self.add_error('remote_storage_path', '请填写远程存储路径或在实例中配置远程备份目录')
+
             if backup_type in ['hot', 'cold', 'incremental'] and databases:
                 self.add_error('databases', '热备/冷备/增量备份不支持指定数据库列表')
             return cleaned_data
@@ -574,7 +633,19 @@ class BackupOneOffTaskAdmin(admin.ModelAdmin):
 
     fieldsets = (
         ('任务信息', {
-            'fields': ('name', 'instance', 'databases', 'backup_type', 'compress', 'run_at')
+            'fields': (
+                'name',
+                'instance',
+                'databases',
+                'backup_type',
+                'compress',
+                'storage_path',
+                'store_local',
+                'store_remote',
+                'store_oss',
+                'remote_storage_path',
+                'run_at'
+            )
         }),
         ('执行状态', {
             'fields': ('status', 'task_id', 'backup_record', 'error_message', 'started_at', 'finished_at')

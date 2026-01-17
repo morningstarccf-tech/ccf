@@ -80,6 +80,31 @@ class BackupStrategy(models.Model):
         blank=True,
         help_text=_('备份文件的存储路径，为空则使用默认路径')
     )
+
+    store_local = models.BooleanField(
+        _('本地保存'),
+        default=True,
+        help_text=_('将备份保存到本地存储路径')
+    )
+
+    store_remote = models.BooleanField(
+        _('远程保存'),
+        default=False,
+        help_text=_('通过 SSH 保存到远程服务器目录')
+    )
+
+    store_oss = models.BooleanField(
+        _('云存储保存'),
+        default=False,
+        help_text=_('上传到对象存储（如 OSS）')
+    )
+
+    remote_storage_path = models.CharField(
+        _('远程存储路径'),
+        max_length=500,
+        blank=True,
+        help_text=_('远程服务器存储路径（优先于实例的远程备份目录）')
+    )
     
     compress = models.BooleanField(
         _('是否压缩'),
@@ -385,6 +410,38 @@ class BackupOneOffTask(models.Model):
         _('是否压缩'),
         default=True,
         help_text=_('是否压缩备份文件')
+    )
+
+    storage_path = models.CharField(
+        _('存储路径'),
+        max_length=500,
+        blank=True,
+        help_text=_('备份文件的存储路径，为空则使用默认路径')
+    )
+
+    store_local = models.BooleanField(
+        _('本地保存'),
+        default=True,
+        help_text=_('将备份保存到本地存储路径')
+    )
+
+    store_remote = models.BooleanField(
+        _('远程保存'),
+        default=False,
+        help_text=_('通过 SSH 保存到远程服务器目录')
+    )
+
+    store_oss = models.BooleanField(
+        _('云存储保存'),
+        default=False,
+        help_text=_('上传到对象存储（如 OSS）')
+    )
+
+    remote_storage_path = models.CharField(
+        _('远程存储路径'),
+        max_length=500,
+        blank=True,
+        help_text=_('远程服务器存储路径（优先于实例的远程备份目录）')
     )
 
     status = models.CharField(
