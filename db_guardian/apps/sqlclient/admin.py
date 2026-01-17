@@ -48,6 +48,12 @@ class QueryExecutionForm(forms.Form):
         label='最大返回行数'
     )
 
+    def clean_database(self):
+        """数据库名去除多余的分号和空白。"""
+        value = self.cleaned_data.get('database') or ''
+        value = value.strip().rstrip(';').strip()
+        return value
+
 
 @admin.register(QueryHistory)
 class QueryHistoryAdmin(admin.ModelAdmin):

@@ -1,20 +1,74 @@
 {% extends "admin/base_site.html" %}
 
 {% block content %}
-  <h1>SQL 终端</h1>
-  <p>执行结果会自动记录到“SQL执行历史”。</p>
+  <style>
+    .sql-terminal-title {
+      white-space: nowrap;
+    }
+    .sql-terminal-form .inline-fields {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .sql-terminal-form .inline-fields > div {
+      flex: 1 1 240px;
+      min-width: 220px;
+    }
+    .terminal-box {
+      background: #111;
+      color: #e5e5e5;
+      padding: 12px;
+      border-radius: 6px;
+      font-family: Consolas, monospace;
+      display: flex;
+      flex-direction: column;
+      min-height: 280px;
+      max-height: 480px;
+    }
+    .terminal-output {
+      flex: 1 1 auto;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .terminal-input-row {
+      display: flex;
+      gap: 8px;
+      border-top: 1px solid #2b2b2b;
+      margin-top: 10px;
+      padding-top: 8px;
+    }
+    .terminal-prompt {
+      color: #9cc8ff;
+      padding-top: 3px;
+    }
+    .terminal-input {
+      flex: 1 1 auto;
+      background: transparent;
+      color: inherit;
+      border: none;
+      outline: none;
+      resize: none;
+      font-family: inherit;
+      min-height: 72px;
+    }
+    .terminal-hint {
+      margin-top: 6px;
+      color: #666;
+    }
+  </style>
 
-  <form id="sql-terminal-form" method="post" novalidate>
+  <h1 class="sql-terminal-title">SQL 终端</h1>
+  <p>执行结果会自动记录到“SQL 执行历史”。</p>
+
+  <form id="sql-terminal-form" class="sql-terminal-form" method="post" novalidate>
     {% csrf_token %}
     <input type="hidden" name="sql" id="terminal-sql">
     <fieldset class="module aligned">
-      <div class="form-row">
+      <div class="form-row inline-fields">
         <div>
           {{ form.instance.label_tag }}
           {{ form.instance }}
         </div>
-      </div>
-      <div class="form-row">
         <div>
           {{ form.database.label_tag }}
           {{ form.database }}
@@ -48,9 +102,14 @@
   </form>
 
   <div id="sql-terminal" style="margin-top: 16px;">
-    <div id="terminal-output" style="background: #111; color: #e5e5e5; padding: 12px; min-height: 240px; max-height: 420px; overflow: auto; font-family: Consolas, monospace; border-radius: 4px;"></div>
-    <textarea id="terminal-input" rows="4" style="width: 100%; margin-top: 10px; font-family: Consolas, monospace;" placeholder="输入 SQL，回车执行，Shift+Enter 换行"></textarea>
-    <div style="margin-top: 6px; color: #666;">
+    <div class="terminal-box">
+      <div id="terminal-output" class="terminal-output"></div>
+      <div class="terminal-input-row">
+        <div class="terminal-prompt">&gt;</div>
+        <textarea id="terminal-input" class="terminal-input" rows="3" placeholder="输入 SQL，回车执行，Shift+Enter 换行"></textarea>
+      </div>
+    </div>
+    <div class="terminal-hint">
       快捷键：Enter 执行，Shift+Enter 换行，↑/↓ 切换历史命令
     </div>
   </div>
