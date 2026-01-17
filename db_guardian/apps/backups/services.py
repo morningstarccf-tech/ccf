@@ -112,6 +112,16 @@ class ObjectStorageUploader:
             self.access_key_secret and self.bucket
         )
 
+    def _parse_object_path(self, object_path: str) -> tuple[str, str]:
+        path = object_path.strip()
+        if path.startswith('oss://'):
+            stripped = path[len('oss://'):]
+            bucket, _, key = stripped.partition('/')
+            if not bucket or not key:
+                raise ValueError('无效的 OSS 路径')
+            return bucket, key
+        return self.bucket, path.lstrip('/')
+
     def upload(self, local_path: Path, instance_alias: str, filename: str) -> str | None:
         if not self._is_ready():
             return None
@@ -126,6 +136,16 @@ class ObjectStorageUploader:
         if result.status not in (200, 201):
             raise RuntimeError(f'OSS 上传失败: status={result.status}')
         return f"oss://{self.bucket}/{object_key}"
+
+    def download(self, object_path: str, local_path: Path) -> None:
+        if not self._is_ready():
+            raise RuntimeError('OSS 未配置或不可用')
+        bucket_name, object_key = self._parse_object_path(object_path)
+        auth = oss2.Auth(self.access_key_id, self.access_key_secret)
+        bucket = oss2.Bucket(auth, self.endpoint, bucket_name)
+        result = bucket.get_object_to_file(object_key, str(local_path))
+        if result.status not in (200, 201, 206):
+            raise RuntimeError(f'OSS 下载失败: status={result.status}')
 
 
 class BackupExecutor:

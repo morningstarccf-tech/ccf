@@ -5,8 +5,10 @@
 """
 import json
 import datetime
+import logging
 from django.contrib import admin, messages
-from django.http import HttpResponseRedirect
+from django.http import HttpResponseRedirect, FileResponse
+from django.conf import settings
 from django.template.response import TemplateResponse
 from django import forms
 from django.utils.html import format_html
@@ -16,9 +18,10 @@ from django.shortcuts import get_object_or_404
 from pathlib import Path
 from apps.backups.models import BackupStrategy, BackupRecord, BackupOneOffTask, BackupTaskBoard
 from apps.backups.tasks import execute_backup_task, execute_oneoff_backup_task
-from apps.backups.services import StrategyManager
+from apps.backups.services import StrategyManager, RemoteExecutor, ObjectStorageUploader
 from apps.backups.services import RestoreExecutor
 
+logger = logging.getLogger(__name__)
 try:
     from django_celery_beat.models import (
         PeriodicTask,
@@ -488,12 +491,11 @@ class BackupRecordAdmin(admin.ModelAdmin):
 
     def download_link(self, obj):
         """显示下载链接"""
-        if obj.status != 'success' or not obj.file_path:
+        if obj.status != 'success':
             return '-'
-        file_path = Path(obj.file_path)
-        if not file_path.exists():
+        if not (obj.file_path or obj.remote_path or obj.object_storage_path):
             return '-'
-        url = f"/api/backups/records/{obj.id}/download/"
+        url = reverse('admin:backups_backuprecord_download', args=[obj.id])
         return format_html('<a href="{}">下载</a>', url)
     download_link.short_description = '下载'
 
@@ -511,9 +513,14 @@ class BackupRecordAdmin(admin.ModelAdmin):
     restore_link.short_description = '恢复'
 
     def get_urls(self):
-        """添加恢复操作的自定义路由"""
+        """添加下载/恢复操作的自定义路由"""
         urls = super().get_urls()
         custom_urls = [
+            path(
+                '<int:record_id>/download/',
+                self.admin_site.admin_view(self.download_view),
+                name='backups_backuprecord_download'
+            ),
             path(
                 '<int:record_id>/restore/',
                 self.admin_site.admin_view(self.restore_view),
@@ -521,6 +528,71 @@ class BackupRecordAdmin(admin.ModelAdmin):
             ),
         ]
         return custom_urls + urls
+
+    def _infer_backup_filename(self, record):
+        for path_value in [record.file_path, record.remote_path, record.object_storage_path]:
+            if not path_value:
+                continue
+            if path_value.startswith('oss://'):
+                stripped = path_value[len('oss://'):]
+                _, _, key = stripped.partition('/')
+                if key:
+                    return Path(key).name
+            return Path(path_value).name
+        return f"backup_{record.id}.sql"
+
+    def _prepare_download_path(self, record):
+        if record.file_path:
+            file_path = Path(record.file_path)
+            if file_path.exists():
+                return file_path
+
+        backup_root = Path(getattr(settings, 'BACKUP_STORAGE_PATH', settings.BASE_DIR / 'backups'))
+        temp_dir = backup_root / 'tmp'
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        filename = self._infer_backup_filename(record)
+        temp_path = temp_dir / filename
+
+        if record.remote_path:
+            executor = RemoteExecutor(record.instance)
+            try:
+                executor.download(record.remote_path, temp_path)
+                if temp_path.exists():
+                    return temp_path
+            except Exception as exc:
+                logger.warning(f"远程备份下载失败: {exc}")
+
+        if record.object_storage_path:
+            uploader = ObjectStorageUploader()
+            try:
+                uploader.download(record.object_storage_path, temp_path)
+                if temp_path.exists():
+                    return temp_path
+            except Exception as exc:
+                logger.warning(f"OSS 备份下载失败: {exc}")
+
+        return None
+
+    def download_view(self, request, record_id):
+        record = get_object_or_404(BackupRecord, pk=record_id)
+        redirect_url = request.META.get(
+            'HTTP_REFERER',
+            reverse('admin:backups_backuprecord_changelist')
+        )
+        if record.status != 'success':
+            messages.error(request, '只能下载成功的备份文件')
+            return HttpResponseRedirect(redirect_url)
+
+        download_path = self._prepare_download_path(record)
+        if not download_path:
+            messages.error(request, '备份文件不存在或无法下载')
+            return HttpResponseRedirect(redirect_url)
+
+        return FileResponse(
+            open(download_path, 'rb'),
+            as_attachment=True,
+            filename=download_path.name
+        )
 
     def restore_view(self, request, record_id):
         """从备份记录恢复数据"""
