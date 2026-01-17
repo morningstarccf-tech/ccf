@@ -393,7 +393,12 @@ class DatabaseSyncService:
     """同步实例数据库列表并刷新统计信息。"""
 
     @staticmethod
-    def sync_databases(instance, refresh_stats: bool = True, include_system: bool = False) -> Dict[str, Any]:
+    def sync_databases(
+        instance,
+        refresh_stats: bool = True,
+        include_system: bool = False,
+        prune_missing: bool = True
+    ) -> Dict[str, Any]:
         system_schemas = {'information_schema', 'mysql', 'performance_schema', 'sys'}
 
         connection = instance.get_connection()
@@ -412,6 +417,7 @@ class DatabaseSyncService:
 
         created_count = 0
         updated_count = 0
+        deleted_count = 0
         synced = []
 
         for schema in schemas:
@@ -443,9 +449,16 @@ class DatabaseSyncService:
 
             synced.append(name)
 
+        if prune_missing:
+            queryset = Database.objects.filter(instance=instance)
+            if synced:
+                queryset = queryset.exclude(name__in=synced)
+            deleted_count, _ = queryset.delete()
+
         return {
             'created': created_count,
             'updated': updated_count,
+            'deleted': deleted_count,
             'total': len(synced),
             'databases': synced,
         }
