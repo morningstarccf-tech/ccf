@@ -252,6 +252,20 @@ class BackupExecutor:
         """获取可用的导出命令（mysqldump 或 mariadb-dump）。"""
         return shutil.which('mysqldump') or shutil.which('mariadb-dump')
 
+    def _supports_ssl_mode(self, dump_bin: str) -> bool:
+        """检测 mysqldump 是否支持 --ssl-mode 选项。"""
+        try:
+            result = subprocess.run(
+                [dump_bin, '--help'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            output = f"{result.stdout}\n{result.stderr}"
+            return 'ssl-mode' in output
+        except Exception:
+            return False
+
     def _build_mysqldump_command(self, database_name, output_file, dump_bin: str):
         """
         构建 mysqldump 命令
@@ -281,7 +295,15 @@ class BackupExecutor:
         # SSL/TLS 配置（默认禁用以兼容自签名证书）
         ssl_mode = getattr(settings, 'MYSQL_DUMP_SSL_MODE', 'DISABLED')
         if ssl_mode:
-            cmd_parts.append(f'--ssl-mode={ssl_mode}')
+            if self._supports_ssl_mode(dump_bin):
+                cmd_parts.append(f'--ssl-mode={ssl_mode}')
+            elif str(ssl_mode).upper() in ('DISABLED', 'DISABLE', 'OFF', '0'):
+                cmd_parts.append('--skip-ssl')
+            else:
+                logger.warning(
+                    "mysqldump 不支持 --ssl-mode，已忽略 SSL 配置: %s",
+                    ssl_mode
+                )
 
         ssl_ca = getattr(settings, 'MYSQL_DUMP_SSL_CA', '')
         if ssl_ca:
