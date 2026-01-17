@@ -45,6 +45,15 @@ class BackupStrategyAdmin(admin.ModelAdmin):
             required=False,
             widget=forms.HiddenInput()
         )
+        storage_target = forms.ChoiceField(
+            label='存储位置',
+            choices=[
+                ('local', '本地路径'),
+                ('remote', '远程服务器路径'),
+                ('oss', '云存储（OSS）'),
+            ],
+            initial='local'
+        )
         store_local = forms.BooleanField(
             label='本地保存',
             required=False,
@@ -118,7 +127,21 @@ class BackupStrategyAdmin(admin.ModelAdmin):
                     self.fields['databases'].initial = ','.join(self.instance.databases)
                 else:
                     self.fields['databases'].initial = str(self.instance.databases)
+            self.fields['store_local'].widget = forms.HiddenInput()
+            self.fields['store_remote'].widget = forms.HiddenInput()
+            self.fields['store_oss'].widget = forms.HiddenInput()
+            self._apply_storage_target_initial()
             self._apply_schedule_initial()
+
+        def _apply_storage_target_initial(self):
+            if not self.instance:
+                return
+            if self.instance.store_remote:
+                self.initial['storage_target'] = 'remote'
+            elif self.instance.store_oss:
+                self.initial['storage_target'] = 'oss'
+            else:
+                self.initial['storage_target'] = 'local'
 
         def _apply_schedule_initial(self):
             cron_expr = self.instance.cron_expression if self.instance else None
@@ -186,6 +209,7 @@ class BackupStrategyAdmin(admin.ModelAdmin):
             schedule_weekday = cleaned_data.get('schedule_weekday')
             schedule_day = cleaned_data.get('schedule_day')
             schedule_minute = cleaned_data.get('schedule_minute')
+            storage_target = cleaned_data.get('storage_target')
 
             if schedule_type == 'hourly':
                 if schedule_minute is None:
@@ -214,14 +238,15 @@ class BackupStrategyAdmin(admin.ModelAdmin):
 
             backup_type = cleaned_data.get('backup_type')
             databases = cleaned_data.get('databases')
-            store_local = cleaned_data.get('store_local')
-            store_remote = cleaned_data.get('store_remote')
-            store_oss = cleaned_data.get('store_oss')
             remote_storage_path = cleaned_data.get('remote_storage_path')
             instance = cleaned_data.get('instance')
 
-            if not (store_local or store_remote or store_oss):
-                self.add_error('store_local', '请至少选择一种存储位置')
+            store_local = storage_target == 'local'
+            store_remote = storage_target == 'remote'
+            store_oss = storage_target == 'oss'
+            cleaned_data['store_local'] = store_local
+            cleaned_data['store_remote'] = store_remote
+            cleaned_data['store_oss'] = store_oss
 
             if store_remote and not remote_storage_path:
                 if not (instance and instance.remote_backup_root):
@@ -273,9 +298,7 @@ class BackupStrategyAdmin(admin.ModelAdmin):
         ('存储设置', {
             'fields': (
                 'storage_path',
-                'store_local',
-                'store_remote',
-                'store_oss',
+                'storage_target',
                 'remote_storage_path',
                 'is_enabled'
             )
@@ -543,6 +566,15 @@ class BackupOneOffTaskAdmin(admin.ModelAdmin):
             widget=forms.Textarea(attrs={'rows': 2}),
             help_text='支持 JSON 数组或逗号分隔，如 ["db1","db2"] 或 db1,db2'
         )
+        storage_target = forms.ChoiceField(
+            label='存储位置',
+            choices=[
+                ('local', '本地路径'),
+                ('remote', '远程服务器路径'),
+                ('oss', '云存储（OSS）'),
+            ],
+            initial='local'
+        )
         store_local = forms.BooleanField(
             label='本地保存',
             required=False,
@@ -568,6 +600,20 @@ class BackupOneOffTaskAdmin(admin.ModelAdmin):
                     self.fields['databases'].initial = ','.join(self.instance.databases)
                 else:
                     self.fields['databases'].initial = str(self.instance.databases)
+            self.fields['store_local'].widget = forms.HiddenInput()
+            self.fields['store_remote'].widget = forms.HiddenInput()
+            self.fields['store_oss'].widget = forms.HiddenInput()
+            self._apply_storage_target_initial()
+
+        def _apply_storage_target_initial(self):
+            if not self.instance:
+                return
+            if self.instance.store_remote:
+                self.initial['storage_target'] = 'remote'
+            elif self.instance.store_oss:
+                self.initial['storage_target'] = 'oss'
+            else:
+                self.initial['storage_target'] = 'local'
 
         def clean_databases(self):
             raw = self.cleaned_data.get('databases')
@@ -598,14 +644,16 @@ class BackupOneOffTaskAdmin(admin.ModelAdmin):
             cleaned_data = super().clean()
             backup_type = cleaned_data.get('backup_type')
             databases = cleaned_data.get('databases')
-            store_local = cleaned_data.get('store_local')
-            store_remote = cleaned_data.get('store_remote')
-            store_oss = cleaned_data.get('store_oss')
+            storage_target = cleaned_data.get('storage_target')
             remote_storage_path = cleaned_data.get('remote_storage_path')
             instance = cleaned_data.get('instance')
 
-            if not (store_local or store_remote or store_oss):
-                self.add_error('store_local', '请至少选择一种存储位置')
+            store_local = storage_target == 'local'
+            store_remote = storage_target == 'remote'
+            store_oss = storage_target == 'oss'
+            cleaned_data['store_local'] = store_local
+            cleaned_data['store_remote'] = store_remote
+            cleaned_data['store_oss'] = store_oss
 
             if store_remote and not remote_storage_path:
                 if not (instance and instance.remote_backup_root):
@@ -640,9 +688,7 @@ class BackupOneOffTaskAdmin(admin.ModelAdmin):
                 'backup_type',
                 'compress',
                 'storage_path',
-                'store_local',
-                'store_remote',
-                'store_oss',
+                'storage_target',
                 'remote_storage_path',
                 'run_at'
             )
