@@ -144,6 +144,73 @@
         output.scrollTop = output.scrollHeight;
       }
 
+      function toCellValue(value) {
+        if (value === null || value === undefined) {
+          return 'NULL';
+        }
+        if (typeof value === 'boolean') {
+          return value ? '1' : '0';
+        }
+        return String(value);
+      }
+
+      function padRight(text, width) {
+        return text + ' '.repeat(Math.max(0, width - text.length));
+      }
+
+      function formatTable(columns, rows) {
+        if (!columns || !columns.length) {
+          return '';
+        }
+        const widths = columns.map((col) => col.length);
+        rows.forEach((row) => {
+          columns.forEach((col, idx) => {
+            const value = toCellValue(row[col]);
+            widths[idx] = Math.max(widths[idx], value.length);
+          });
+        });
+
+        const separator = '+' + widths.map((w) => '-'.repeat(w + 2)).join('+') + '+';
+        const header = '|' + columns.map((col, idx) => ` ${padRight(col, widths[idx])} `).join('|') + '|';
+        const lines = [separator, header, separator];
+
+        rows.forEach((row) => {
+          const line = '|' + columns.map((col, idx) => ` ${padRight(toCellValue(row[col]), widths[idx])} `).join('|') + '|';
+          lines.push(line);
+        });
+        lines.push(separator);
+        return lines.join('\n');
+      }
+
+      function renderResult(result) {
+        if (!result || !result.success) {
+          appendLine(`ERROR: ${result && result.message ? result.message : '执行失败'}`);
+          if (result && result.errors) {
+            appendBlock(JSON.stringify(result.errors, null, 2));
+          }
+          return;
+        }
+
+        if (result.columns && result.columns.length) {
+          const table = formatTable(result.columns, result.data || []);
+          if (table) {
+            appendBlock(table);
+          }
+        }
+
+        const seconds = (result.execution_time_ms / 1000).toFixed(2);
+        const rows = result.rows_affected || 0;
+        if (['SELECT', 'SHOW', 'DESC', 'EXPLAIN'].includes(result.sql_type)) {
+          appendLine(`${rows} rows in set (${seconds} sec)`);
+        } else {
+          appendLine(`${rows} rows affected (${seconds} sec)`);
+        }
+
+        if (result.warnings && result.warnings.length) {
+          result.warnings.forEach((warning) => appendLine(`Warning: ${warning}`));
+        }
+      }
+
       async function executeSql(sql) {
         sqlField.value = sql;
         const data = new URLSearchParams(new FormData(form));
@@ -170,24 +237,7 @@
 
         try {
           const result = await executeSql(sql);
-          if (result.success) {
-            appendLine(`OK (${result.sql_type}) rows=${result.rows_affected} time=${result.execution_time_ms}ms`);
-            if (result.columns && result.columns.length) {
-              appendLine(`Columns: ${result.columns.join(', ')}`);
-            }
-            if (result.data && result.data.length) {
-              const sliced = result.data.slice(0, 50);
-              appendBlock(JSON.stringify(sliced, null, 2));
-              if (result.data.length > 50) {
-                appendLine('... 已截断，仅显示前 50 行');
-              }
-            }
-          } else {
-            appendLine(`ERROR: ${result.message || '执行失败'}`);
-            if (result.errors) {
-              appendBlock(JSON.stringify(result.errors, null, 2));
-            }
-          }
+          renderResult(result);
         } catch (err) {
           appendLine(`ERROR: ${err}`);
         }
