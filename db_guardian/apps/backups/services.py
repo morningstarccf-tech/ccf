@@ -719,6 +719,20 @@ class RestoreExecutor:
                 'success': False,
                 'error_message': error_msg
             }
+
+    def _supports_ssl_mode(self, mysql_bin: str) -> bool:
+        """检测 mysql 是否支持 --ssl-mode 选项。"""
+        try:
+            result = subprocess.run(
+                [mysql_bin, '--help'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            output = f"{result.stdout}\n{result.stderr}"
+            return 'ssl-mode' in output
+        except Exception:
+            return False
     
     def _decompress_file(self, compressed_path):
         """
@@ -760,8 +774,9 @@ class RestoreExecutor:
         password = self.instance.get_decrypted_password()
         
         # 基础命令
+        mysql_bin = 'mysql'
         cmd_parts = [
-            'mysql',
+            mysql_bin,
             f'-h {self.instance.host}',
             f'-P {self.instance.port}',
             f'-u {self.instance.username}',
@@ -770,6 +785,22 @@ class RestoreExecutor:
         # 添加密码
         if password:
             cmd_parts.append(f'-p"{password}"')
+
+        # SSL/TLS 配置（默认禁用以兼容自签名证书）
+        ssl_mode = getattr(settings, 'MYSQL_DUMP_SSL_MODE', 'DISABLED')
+        if ssl_mode:
+            if self._supports_ssl_mode(mysql_bin):
+                cmd_parts.append(f'--ssl-mode={ssl_mode}')
+                ssl_ca = getattr(settings, 'MYSQL_DUMP_SSL_CA', '')
+                if ssl_ca:
+                    cmd_parts.append(f'--ssl-ca="{ssl_ca}"')
+            elif str(ssl_mode).upper() in ('DISABLED', 'DISABLE', 'OFF', '0'):
+                cmd_parts.append('--skip-ssl')
+            else:
+                logger.warning(
+                    "mysql 不支持 --ssl-mode，已忽略 SSL 配置: %s",
+                    ssl_mode
+                )
         
         # 指定目标数据库（如果提供）
         if target_database:
