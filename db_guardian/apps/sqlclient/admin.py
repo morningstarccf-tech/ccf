@@ -5,10 +5,10 @@ SQL客户端应用 Admin 配置
 from django.contrib import admin, messages
 from django import forms
 from django.template.response import TemplateResponse
-from django.urls import reverse, path
+from django.urls import reverse
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
-from .models import QueryHistory
+from .models import QueryHistory, SQLTerminal
 from .services import QueryExecutor
 from apps.instances.models import MySQLInstance
 
@@ -95,7 +95,6 @@ class QueryHistoryAdmin(admin.ModelAdmin):
     list_per_page = 50
     date_hierarchy = 'executed_at'
     ordering = ['-executed_at']
-    change_list_template = 'admin/sqlclient/queryhistory/change_list.html'
     
     fieldsets = [
         ('基本信息', {
@@ -171,19 +170,23 @@ class QueryHistoryAdmin(admin.ModelAdmin):
         """允许删除历史记录"""
         return request.user.is_superuser
 
-    def get_urls(self):
-        """添加 SQL 执行页面"""
-        urls = super().get_urls()
-        custom_urls = [
-            path(
-                'execute/',
-                self.admin_site.admin_view(self.execute_sql_view),
-                name='sqlclient_queryhistory_execute'
-            ),
-        ]
-        return custom_urls + urls
 
-    def execute_sql_view(self, request):
+@admin.register(SQLTerminal)
+class SQLTerminalAdmin(admin.ModelAdmin):
+    """SQL 终端 Admin 配置（仅提供执行界面）"""
+
+    change_list_template = 'admin/sqlclient/sqlterminal/change_list.html'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def changelist_view(self, request, extra_context=None):
         """执行 SQL 并写入历史记录"""
         result = None
         if request.method == 'POST':
@@ -222,8 +225,10 @@ class QueryHistoryAdmin(admin.ModelAdmin):
 
         context = {
             **self.admin_site.each_context(request),
-            'title': 'SQL 执行',
+            'title': 'SQL 终端',
             'form': form,
             'result': result,
         }
-        return TemplateResponse(request, 'admin/sqlclient/queryhistory/execute.html', context)
+        if extra_context:
+            context.update(extra_context)
+        return TemplateResponse(request, self.change_list_template, context)

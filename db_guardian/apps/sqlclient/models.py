@@ -171,3 +171,12 @@ class QueryHistory(models.Model):
         self.result_cached = True
         self.result_cache_key = cache_key
         self.save(update_fields=['result_cached', 'result_cache_key'])
+
+
+class SQLTerminal(QueryHistory):
+    """SQL 终端（使用 QueryHistory 作为代理模型）"""
+
+    class Meta:
+        proxy = True
+        verbose_name = _('SQL终端')
+        verbose_name_plural = _('SQL终端')

@@ -1,7 +1,8 @@
 {% extends "admin/base_site.html" %}
 
 {% block content %}
-  <h1>SQL 执行</h1>
+  <h1>SQL 终端</h1>
+  <p>执行结果会自动记录到“SQL执行历史”。</p>
 
   <form method="post" novalidate>
     {% csrf_token %}
@@ -10,7 +11,7 @@
     </fieldset>
     <div class="submit-row">
       <input type="submit" class="default" value="执行">
-      <a href="{% url 'admin:sqlclient_queryhistory_changelist' %}" class="button">返回</a>
+      <a href="{% url 'admin:sqlclient_queryhistory_changelist' %}" class="button">查看执行历史</a>
     </div>
   </form>
 
