@@ -6,8 +6,41 @@
 
   <form id="sql-terminal-form" method="post" novalidate>
     {% csrf_token %}
+    <input type="hidden" name="sql" id="terminal-sql">
     <fieldset class="module aligned">
-      {{ form.as_p }}
+      <div class="form-row">
+        <div>
+          {{ form.instance.label_tag }}
+          {{ form.instance }}
+        </div>
+      </div>
+      <div class="form-row">
+        <div>
+          {{ form.database.label_tag }}
+          {{ form.database }}
+        </div>
+      </div>
+      <details style="margin-top: 8px;">
+        <summary>高级设置</summary>
+        <div class="form-row">
+          <div>
+            {{ form.timeout.label_tag }}
+            {{ form.timeout }}
+          </div>
+        </div>
+        <div class="form-row">
+          <div>
+            {{ form.apply_limit.label_tag }}
+            {{ form.apply_limit }}
+          </div>
+        </div>
+        <div class="form-row">
+          <div>
+            {{ form.max_rows.label_tag }}
+            {{ form.max_rows }}
+          </div>
+        </div>
+      </details>
     </fieldset>
     <div class="submit-row">
       <a href="{{ history_url }}" class="button">查看执行历史</a>
@@ -25,6 +58,7 @@
   <script>
     (function () {
       const form = document.getElementById('sql-terminal-form');
+      const sqlField = document.getElementById('terminal-sql');
       const output = document.getElementById('terminal-output');
       const input = document.getElementById('terminal-input');
       const executeUrl = "{{ execute_url }}";
@@ -52,8 +86,8 @@
       }
 
       async function executeSql(sql) {
+        sqlField.value = sql;
         const data = new URLSearchParams(new FormData(form));
-        data.set('sql', sql);
         const response = await fetch(executeUrl, {
           method: 'POST',
           headers: {
@@ -86,7 +120,7 @@
               const sliced = result.data.slice(0, 50);
               appendBlock(JSON.stringify(sliced, null, 2));
               if (result.data.length > 50) {
-                appendLine(`... 已截断，仅显示前 50 行`);
+                appendLine('... 已截断，仅显示前 50 行');
               }
             }
           } else {
