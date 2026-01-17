@@ -393,7 +393,7 @@ class BackupRecordListSerializer(serializers.ModelSerializer):
     strategy_name = serializers.SerializerMethodField()
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     backup_type_display = serializers.CharField(source='get_backup_type_display', read_only=True)
-    base_backup_id = serializers.IntegerField(source='base_backup_id', read_only=True)
+    base_backup_id = serializers.IntegerField(read_only=True)
     
     class Meta:
         model = BackupRecord
