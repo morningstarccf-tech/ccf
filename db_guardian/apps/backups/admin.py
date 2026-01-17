@@ -509,7 +509,7 @@ class BackupRecordAdmin(admin.ModelAdmin):
         """显示恢复链接（仅支持成功的全量备份）"""
         if obj.status != 'success' or obj.backup_type != 'full':
             return '-'
-        if not obj.file_path or not Path(obj.file_path).exists():
+        if not (obj.file_path or obj.remote_path or obj.object_storage_path):
             return '-'
         url = reverse('admin:backups_backuprecord_restore', args=[obj.id])
         return format_html(
@@ -616,17 +616,28 @@ class BackupRecordAdmin(admin.ModelAdmin):
             messages.error(request, '热备/冷备/增量备份暂不支持在线恢复')
             return HttpResponseRedirect(redirect_url)
 
-        if not record.file_path or not Path(record.file_path).exists():
-            messages.error(request, '备份文件不存在，无法恢复')
+        restore_path = self._prepare_download_path(record)
+        if not restore_path:
+            messages.error(request, '备份文件不存在或无法下载，无法恢复')
             return HttpResponseRedirect(redirect_url)
 
         target_db = request.GET.get('target_db') or None
         executor = RestoreExecutor(record.instance)
-        result = executor.execute_restore(record.file_path, target_db)
+        result = executor.execute_restore(str(restore_path), target_db)
         if result.get('success'):
             messages.success(request, '恢复完成')
         else:
             messages.error(request, result.get('error_message', '恢复失败'))
+
+        try:
+            if restore_path and (
+                not record.file_path
+                or Path(record.file_path).resolve() != restore_path.resolve()
+            ):
+                if restore_path.exists():
+                    restore_path.unlink()
+        except Exception as exc:
+            logger.warning(f"清理临时恢复文件失败: {exc}")
 
         return HttpResponseRedirect(redirect_url)
 
