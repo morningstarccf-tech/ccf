@@ -1,5 +1,5 @@
 """
-DB-Guardian 主路由配置
+AuroraVault 主路由配置
 定义项目所有应用的URL路由
 """
 from django.contrib import admin

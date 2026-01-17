@@ -1,4 +1,4 @@
-# DB-Guardian - 一体化MySQL数据库管理与备份平台
+# AuroraVault - 一体化MySQL数据库管理与备份平台
 
 [![Python](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
 [![Django](https://img.shields.io/badge/Django-4.2+-green.svg)](https://www.djangoproject.com/)
@@ -6,7 +6,7 @@
 
 ## 项目简介
 
-DB-Guardian 是一个企业级的MySQL数据库管理和备份平台后端服务，提供自动化备份策略、精细化权限管控、实时监控和在线SQL客户端等功能。本项目采用前后端分离架构，基于Django和Django REST Framework构建。
+AuroraVault 是一个企业级的MySQL数据库管理和备份平台后端服务，提供自动化备份策略、精细化权限管控、实时监控和在线SQL客户端等功能。本项目采用前后端分离架构，基于Django和Django REST Framework构建。
 
 ## 核心功能
 

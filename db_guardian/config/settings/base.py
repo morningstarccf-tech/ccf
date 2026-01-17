@@ -1,5 +1,5 @@
 """
-Django base settings for DB-Guardian project.
+Django base settings for AuroraVault project.
 这些设置在所有环境中共享
 """
 from pathlib import Path
@@ -264,7 +264,7 @@ LOGGING = {
         },
         'file': {
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': BASE_DIR / 'logs' / 'db_guardian.log',
+            'filename': BASE_DIR / 'logs' / 'auroravault.log',
             'maxBytes': 1024 * 1024 * 10,  # 10MB
             'backupCount': 5,
             'formatter': 'verbose',

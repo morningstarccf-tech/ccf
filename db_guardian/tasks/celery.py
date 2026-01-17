@@ -1,5 +1,5 @@
 """
-Celery configuration for DB-Guardian
+Celery configuration for AuroraVault
 异步任务队列配置
 """
 import os
@@ -10,7 +10,7 @@ from celery.signals import setup_logging
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 
 # 创建 Celery 应用
-app = Celery('db_guardian')
+app = Celery('auroravault')
 
 # 使用 Django settings 配置 Celery
 # namespace='CELERY' 表示所有 celery 配置项必须以 CELERY_ 开头

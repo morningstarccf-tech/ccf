@@ -1,5 +1,5 @@
 """
-Production settings for DB-Guardian project.
+Production settings for AuroraVault project.
 生产环境的安全配置
 """
 from .base import *
@@ -63,7 +63,7 @@ CACHES = {
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
         },
-        'KEY_PREFIX': 'db_guardian',
+        'KEY_PREFIX': 'auroravault',
         'TIMEOUT': 300,
     }
 }
@@ -75,12 +75,12 @@ EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
 EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
 EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
-DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@db-guardian.com')
+DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@auroravault.com')
 
 # Logging - 生产环境日志配置
 from pathlib import Path
 LOG_FILE_PATH = Path(
-    config('LOG_FILE_PATH', default=str(BASE_DIR / 'logs' / 'db_guardian.log'))
+    config('LOG_FILE_PATH', default=str(BASE_DIR / 'logs' / 'auroravault.log'))
 )
 LOG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
 LOGGING['handlers']['file']['filename'] = str(LOG_FILE_PATH)

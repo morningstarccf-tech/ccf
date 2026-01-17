@@ -435,7 +435,7 @@ class BackupExecutor:
 
     def _remote_root(self):
         safe_alias = self.instance.alias.replace(' ', '_')
-        return f"/tmp/db_guardian/{safe_alias}"
+        return f"/tmp/auroravault/{safe_alias}"
 
     def _archive_remote_dir(self, executor, remote_dir, compress):
         parent_dir = str(Path(remote_dir).parent)

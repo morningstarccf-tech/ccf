@@ -1,5 +1,5 @@
 """
-Celery tasks and background job configurations for DB-Guardian
+Celery tasks and background job configurations for AuroraVault
 """
 from .celery import app as celery_app
 

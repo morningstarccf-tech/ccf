@@ -194,6 +194,6 @@ class TeamMemberAdmin(admin.ModelAdmin):
 
 
 # 自定义 Admin 站点标题
-admin.site.site_header = _('DB-Guardian 管理后台')
-admin.site.site_title = _('DB-Guardian')
-admin.site.index_title = _('欢迎使用 DB-Guardian 管理系统')
+admin.site.site_header = _('AuroraVault 管理后台')
+admin.site.site_title = _('AuroraVault')
+admin.site.index_title = _('欢迎使用 AuroraVault 管理系统')

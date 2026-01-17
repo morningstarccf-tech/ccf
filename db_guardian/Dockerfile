@@ -1,4 +1,4 @@
-# Dockerfile for DB-Guardian Backend Service
+# Dockerfile for AuroraVault Backend Service
 FROM python:3.11-slim
 
 # 设置环境变量

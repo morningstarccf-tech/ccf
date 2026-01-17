@@ -1,5 +1,5 @@
 """
-Development settings for DB-Guardian project.
+Development settings for AuroraVault project.
 """
 from .base import *
 

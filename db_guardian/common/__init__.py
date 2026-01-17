@@ -1,3 +1,3 @@
 """
-Common utilities and helpers for DB-Guardian
+Common utilities and helpers for AuroraVault
 """

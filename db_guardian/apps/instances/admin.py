@@ -397,6 +397,6 @@ class MonitoringMetricsAdmin(admin.ModelAdmin):
 
 
 # 自定义 Admin 站点标题
-admin.site.site_header = 'DB-Guardian 管理后台'
-admin.site.site_title = 'DB-Guardian'
+admin.site.site_header = 'AuroraVault 管理后台'
+admin.site.site_title = 'AuroraVault'
 admin.site.index_title = 'MySQL 数据库备份恢复系统'

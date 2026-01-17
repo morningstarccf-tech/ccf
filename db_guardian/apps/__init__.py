@@ -1,3 +1,3 @@
 """
-DB-Guardian Application Modules
+AuroraVault Application Modules
 """
