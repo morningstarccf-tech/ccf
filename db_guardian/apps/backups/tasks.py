@@ -51,6 +51,7 @@ def _execute_backup_core(
         store_remote = strategy.store_remote
         store_oss = strategy.store_oss
         remote_storage_path = strategy.remote_storage_path or None
+        storage_mode = strategy.storage_mode
         if store_remote and strategy.storage_mode == 'remote_server':
             remote_config = {
                 'protocol': strategy.remote_protocol,
@@ -81,6 +82,28 @@ def _execute_backup_core(
             oss_config = oss_config_override
     else:
         raise ValueError("必须提供 strategy_id 或 instance_id")
+
+    # 统一存储策略：选哪就只存哪
+    if storage_mode == 'default':
+        store_local = True
+        store_remote = False
+        store_oss = False
+    elif storage_mode == 'mysql_host':
+        store_local = False
+        store_remote = True
+        store_oss = False
+    elif storage_mode == 'remote_server':
+        store_local = False
+        store_remote = True
+        store_oss = False
+        if not remote_config:
+            raise ValueError("远程服务器配置缺失，无法上传备份")
+    elif storage_mode == 'oss':
+        store_local = False
+        store_remote = False
+        store_oss = True
+        if not oss_config:
+            raise ValueError("云存储配置缺失，无法上传备份")
 
     base_backup = None
     if backup_type == 'incremental':
