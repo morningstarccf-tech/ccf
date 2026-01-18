@@ -7,16 +7,17 @@
 {{ block.super }}
 <style>
   :root {
-    --aurora-card-bg: rgba(255, 255, 255, 0.92);
-    --aurora-card-border: rgba(255, 255, 255, 0.6);
-    --aurora-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
-    --aurora-accent: #6d5b77;
-    --aurora-muted: rgba(255, 255, 255, 0.55);
+    --aurora-card-bg: rgba(255, 255, 255, 0.95);
+    --aurora-card-border: rgba(255, 255, 255, 0.7);
+    --aurora-shadow: 0 18px 60px rgba(17, 16, 22, 0.25);
+    --aurora-accent: #7d6a86;
+    --aurora-text: #1c1c22;
   }
 
   body.aurora-login {
     min-height: 100vh;
-    background: #0f0b14;
+    background: #1a1422;
+    font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
   }
 
   body.aurora-login #header,
@@ -36,18 +37,32 @@
     display: grid;
     place-items: center;
     overflow: hidden;
-    background:
-      linear-gradient(120deg, rgba(18, 10, 32, 0.75), rgba(63, 38, 68, 0.45)),
-      url("{% static 'login/plo.jpg' %}") center/cover no-repeat;
+    background: url("{% static 'login/plo.jpg' %}") center/cover no-repeat;
   }
 
   .aurora-login__overlay {
     position: absolute;
     inset: 0;
-    background:
-      radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.08), transparent 45%),
-      radial-gradient(circle at 80% 10%, rgba(255, 255, 255, 0.06), transparent 40%);
+    background: linear-gradient(180deg, rgba(8, 8, 12, 0.25), rgba(8, 8, 12, 0));
     pointer-events: none;
+  }
+
+  .aurora-login__topbar {
+    position: absolute;
+    top: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 13px;
+    letter-spacing: 0.3px;
+    z-index: 2;
+  }
+
+  .aurora-login__topbar span {
+    font-weight: 600;
   }
 
   .aurora-login__card {
@@ -75,7 +90,7 @@
     border-radius: 12px;
     display: grid;
     place-items: center;
-    background: #14111a;
+    background: #1f1a2a;
     color: #fff;
     font-size: 22px;
   }
@@ -83,7 +98,7 @@
   .aurora-login__title {
     font-size: 22px;
     font-weight: 700;
-    color: #2b2b2b;
+    color: var(--aurora-text);
   }
 
   .aurora-login__subtitle {
@@ -114,7 +129,7 @@
     padding: 12px 14px;
     border-radius: 10px;
     border: 1px solid #e4e4ea;
-    background: #f6f6f8;
+    background: #f3f3f6;
     font-size: 14px;
     color: #222;
   }
@@ -139,7 +154,7 @@
   }
 
   .aurora-login__button:hover {
-    background: #5c4c65;
+    background: #6e5f78;
   }
 
   .aurora-login__error {
@@ -211,6 +226,9 @@
 {% block content %}
 <div class="aurora-login__wrapper">
   <div class="aurora-login__overlay"></div>
+  <div class="aurora-login__topbar">
+    <span>MySQL Backup Software</span>
+  </div>
   <div id="petal-container"></div>
   <div class="aurora-login__card">
     <div class="aurora-login__brand">
