@@ -749,10 +749,18 @@ class BackupRecordAdmin(admin.ModelAdmin):
         return f"backup_{record.id}.sql"
 
     def _prepare_download_path(self, record):
+        errors = []
+
         if record.file_path:
             file_path = Path(record.file_path)
             if file_path.exists() and file_path.is_file():
                 return file_path
+            if file_path.exists() and file_path.is_dir():
+                errors.append(f"本地路径是目录: {file_path}")
+            else:
+                errors.append(f"本地文件不存在: {file_path}")
+        else:
+            errors.append("本地文件路径为空")
 
         backup_root = Path(getattr(settings, 'BACKUP_STORAGE_PATH', settings.BASE_DIR / 'backups'))
         temp_dir = backup_root / 'tmp'
@@ -775,10 +783,14 @@ class BackupRecordAdmin(admin.ModelAdmin):
                 else:
                     executor = RemoteExecutor(record.instance)
                     executor.download(record.remote_path, temp_path)
-                if temp_path.exists():
+                if temp_path.exists() and temp_path.is_file():
                     return temp_path
+                errors.append(f"远程下载后文件仍不存在: {temp_path}")
             except Exception as exc:
+                errors.append(f"远程下载失败: {exc}")
                 logger.warning(f"远程备份下载失败: {exc}")
+        else:
+            errors.append("远程路径为空")
 
         if record.object_storage_path:
             oss_config = None
@@ -797,12 +809,16 @@ class BackupRecordAdmin(admin.ModelAdmin):
             uploader = ObjectStorageUploader(config=oss_config)
             try:
                 uploader.download(record.object_storage_path, temp_path)
-                if temp_path.exists():
+                if temp_path.exists() and temp_path.is_file():
                     return temp_path
+                errors.append(f"云存储下载后文件仍不存在: {temp_path}")
             except Exception as exc:
+                errors.append(f"云存储下载失败: {exc}")
                 logger.warning(f"OSS 备份下载失败: {exc}")
+        else:
+            errors.append("云存储路径为空")
 
-        return None
+        raise RuntimeError("；".join(errors))
 
     def download_view(self, request, record_id):
         record = get_object_or_404(BackupRecord, pk=record_id)
