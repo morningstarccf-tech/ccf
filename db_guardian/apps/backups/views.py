@@ -51,15 +51,19 @@ def _infer_backup_filename(record):
             stripped = path_value[len('oss://'):]
             _, _, key = stripped.partition('/')
             if key:
-                return Path(key).name
-        return Path(path_value).name
+                name = Path(key).name
+                if name not in ('', '.', '..'):
+                    return name
+        name = Path(path_value).name
+        if name not in ('', '.', '..'):
+            return name
     return f"backup_{record.id}.sql"
 
 
 def _prepare_backup_download_path(record):
     if record.file_path:
         file_path = Path(record.file_path)
-        if file_path.exists():
+        if file_path.exists() and file_path.is_file():
             return file_path
 
     backup_root = Path(getattr(settings, 'BACKUP_STORAGE_PATH', settings.BASE_DIR / 'backups'))

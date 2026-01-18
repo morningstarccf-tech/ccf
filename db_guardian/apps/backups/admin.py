@@ -744,8 +744,12 @@ class BackupRecordAdmin(admin.ModelAdmin):
                 stripped = path_value[len('oss://'):]
                 _, _, key = stripped.partition('/')
                 if key:
-                    return Path(key).name
-            return Path(path_value).name
+                    name = Path(key).name
+                    if name not in ('', '.', '..'):
+                        return name
+            name = Path(path_value).name
+            if name not in ('', '.', '..'):
+                return name
         return f"backup_{record.id}.sql"
 
     def _prepare_download_path(self, record):
@@ -756,7 +760,10 @@ class BackupRecordAdmin(admin.ModelAdmin):
             if file_path.exists() and file_path.is_file():
                 return file_path
             if file_path.exists() and file_path.is_dir():
-                errors.append(f"本地路径是目录: {file_path}")
+                if file_path.name in ('', '.', '..'):
+                    errors.append(f"本地文件路径无效: {file_path}")
+                else:
+                    errors.append(f"本地路径是目录: {file_path}")
             else:
                 errors.append(f"本地文件不存在: {file_path}")
         else:
