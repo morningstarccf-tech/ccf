@@ -814,16 +814,21 @@ class BackupRecordAdmin(admin.ModelAdmin):
             messages.error(request, '只能下载成功的备份文件')
             return HttpResponseRedirect(redirect_url)
 
-        download_path = self._prepare_download_path(record)
-        if not download_path:
-            messages.error(request, '备份文件不存在或无法下载')
-            return HttpResponseRedirect(redirect_url)
+        try:
+            download_path = self._prepare_download_path(record)
+            if not download_path or not download_path.exists():
+                messages.error(request, '备份文件不存在或无法下载')
+                return HttpResponseRedirect(redirect_url)
 
-        return FileResponse(
-            open(download_path, 'rb'),
-            as_attachment=True,
-            filename=download_path.name
-        )
+            return FileResponse(
+                open(download_path, 'rb'),
+                as_attachment=True,
+                filename=download_path.name
+            )
+        except Exception as exc:
+            logger.exception(f"备份下载失败: {exc}")
+            messages.error(request, f'下载失败: {exc}')
+            return HttpResponseRedirect(redirect_url)
 
     def restore_view(self, request, record_id):
         """从备份记录恢复数据"""
@@ -841,30 +846,35 @@ class BackupRecordAdmin(admin.ModelAdmin):
             messages.error(request, '热备/冷备/增量备份暂不支持在线恢复')
             return HttpResponseRedirect(redirect_url)
 
-        restore_path = self._prepare_download_path(record)
-        if not restore_path:
-            messages.error(request, '备份文件不存在或无法下载，无法恢复')
-            return HttpResponseRedirect(redirect_url)
-
-        target_db = request.GET.get('target_db') or None
-        executor = RestoreExecutor(record.instance)
-        result = executor.execute_restore(str(restore_path), target_db)
-        if result.get('success'):
-            messages.success(request, '恢复完成')
-        else:
-            messages.error(request, result.get('error_message', '恢复失败'))
-
         try:
-            if restore_path and (
-                not record.file_path
-                or Path(record.file_path).resolve() != restore_path.resolve()
-            ):
-                if restore_path.exists():
-                    restore_path.unlink()
-        except Exception as exc:
-            logger.warning(f"清理临时恢复文件失败: {exc}")
+            restore_path = self._prepare_download_path(record)
+            if not restore_path or not restore_path.exists():
+                messages.error(request, '备份文件不存在或无法下载，无法恢复')
+                return HttpResponseRedirect(redirect_url)
 
-        return HttpResponseRedirect(redirect_url)
+            target_db = request.GET.get('target_db') or None
+            executor = RestoreExecutor(record.instance)
+            result = executor.execute_restore(str(restore_path), target_db)
+            if result.get('success'):
+                messages.success(request, '恢复完成')
+            else:
+                messages.error(request, result.get('error_message', '恢复失败'))
+
+            try:
+                if restore_path and (
+                    not record.file_path
+                    or Path(record.file_path).resolve() != restore_path.resolve()
+                ):
+                    if restore_path.exists():
+                        restore_path.unlink()
+            except Exception as exc:
+                logger.warning(f"清理临时恢复文件失败: {exc}")
+
+            return HttpResponseRedirect(redirect_url)
+        except Exception as exc:
+            logger.exception(f"备份恢复失败: {exc}")
+            messages.error(request, f'恢复失败: {exc}')
+            return HttpResponseRedirect(redirect_url)
 
 
 @admin.register(BackupOneOffTask)
