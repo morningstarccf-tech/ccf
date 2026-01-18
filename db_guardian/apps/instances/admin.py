@@ -28,7 +28,8 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
     ]
     list_filter = ['status', 'team', 'created_at']
     search_fields = ['alias', 'host', 'description']
-    actions = ['sync_databases_action', 'trigger_backup_action']
+    actions = ['trigger_backup_action']
+    change_list_template = 'admin/instances/mysqlinstance/change_list.html'
     change_form_template = 'admin/instances/mysqlinstance/change_form.html'
     # 使用自定义表单，密码字段通过 PasswordInput 输入，不在表单中回显已加密内容
     class MySQLInstanceForm(forms.ModelForm):
@@ -184,13 +185,25 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
             return HttpResponseRedirect(request.path)
         return super().response_change(request, obj)
 
-    @admin.action(description='同步数据库列表并刷新统计')
-    def sync_databases_action(self, request, queryset):
-        """从 MySQL 实例同步数据库列表"""
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                'refresh-all/',
+                self.admin_site.admin_view(self.refresh_all_view),
+                name='instances_mysqlinstance_refresh_all'
+            )
+        ]
+        return custom_urls + urls
+
+    def refresh_all_view(self, request):
+        if request.method != 'POST':
+            return HttpResponseRedirect(reverse('admin:instances_mysqlinstance_changelist'))
+        instances = MySQLInstance.objects.all()
         created_total = 0
         updated_total = 0
         deleted_total = 0
-        for instance in queryset:
+        for instance in instances:
             try:
                 result = DatabaseSyncService.sync_databases(
                     instance,
@@ -204,8 +217,9 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
                 messages.error(request, f'{instance.alias} 同步失败: {exc}')
         messages.success(
             request,
-            f'同步完成，新增 {created_total} 个，更新 {updated_total} 个，删除 {deleted_total} 个'
+            f'已刷新所有实例：新增 {created_total} 个，更新 {updated_total} 个，删除 {deleted_total} 个'
         )
+        return HttpResponseRedirect(reverse('admin:instances_mysqlinstance_changelist'))
 
     @admin.action(description='立即执行备份')
     def trigger_backup_action(self, request, queryset):
@@ -245,7 +259,7 @@ class DatabaseAdmin(admin.ModelAdmin):
     list_filter = ['instance', 'charset', 'created_at']
     search_fields = ['name', 'instance__alias']
     readonly_fields = ['size_mb', 'table_count', 'last_backup_time', 'created_at', 'updated_at']
-    actions = ['sync_related_instances_action']
+    actions = None
     change_list_template = 'admin/instances/database/instance_list.html'
     
     def has_add_permission(self, request):
