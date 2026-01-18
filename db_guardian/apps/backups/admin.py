@@ -751,7 +751,7 @@ class BackupRecordAdmin(admin.ModelAdmin):
     def _prepare_download_path(self, record):
         if record.file_path:
             file_path = Path(record.file_path)
-            if file_path.exists():
+            if file_path.exists() and file_path.is_file():
                 return file_path
 
         backup_root = Path(getattr(settings, 'BACKUP_STORAGE_PATH', settings.BASE_DIR / 'backups'))
