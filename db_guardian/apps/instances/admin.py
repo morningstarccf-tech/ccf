@@ -158,7 +158,7 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
                 result = DatabaseSyncService.sync_databases(
                     obj,
                     refresh_stats=True,
-                    include_system=False
+                    include_system=True
                 )
                 messages.success(
                     request,
@@ -195,7 +195,7 @@ class MySQLInstanceAdmin(admin.ModelAdmin):
                 result = DatabaseSyncService.sync_databases(
                     instance,
                     refresh_stats=True,
-                    include_system=False
+                    include_system=True
                 )
                 created_total += result['created']
                 updated_total += result['updated']
@@ -281,7 +281,8 @@ class DatabaseAdmin(admin.ModelAdmin):
         context = {
             **self.admin_site.each_context(request),
             'title': '数据库',
-            'instances': instances
+            'instances': instances,
+            'refresh_url': reverse('admin:instances_database_refresh_all')
         }
         if extra_context:
             context.update(extra_context)
@@ -299,7 +300,7 @@ class DatabaseAdmin(admin.ModelAdmin):
                 result = DatabaseSyncService.sync_databases(
                     instance,
                     refresh_stats=True,
-                    include_system=False
+                    include_system=True
                 )
                 created_total += result['created']
                 updated_total += result['updated']
@@ -310,6 +311,42 @@ class DatabaseAdmin(admin.ModelAdmin):
             request,
             f'同步完成，新增 {created_total} 个，更新 {updated_total} 个，删除 {deleted_total} 个'
         )
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                'refresh-all/',
+                self.admin_site.admin_view(self.refresh_all_view),
+                name='instances_database_refresh_all'
+            )
+        ]
+        return custom_urls + urls
+
+    def refresh_all_view(self, request):
+        if request.method != 'POST':
+            return HttpResponseRedirect(reverse('admin:instances_database_changelist'))
+        instances = MySQLInstance.objects.all()
+        created_total = 0
+        updated_total = 0
+        deleted_total = 0
+        for instance in instances:
+            try:
+                result = DatabaseSyncService.sync_databases(
+                    instance,
+                    refresh_stats=True,
+                    include_system=True
+                )
+                created_total += result['created']
+                updated_total += result['updated']
+                deleted_total += result.get('deleted', 0)
+            except Exception as exc:
+                messages.error(request, f'{instance.alias} 同步失败: {exc}')
+        messages.success(
+            request,
+            f'已刷新所有实例：新增 {created_total} 个，更新 {updated_total} 个，删除 {deleted_total} 个'
+        )
+        return HttpResponseRedirect(reverse('admin:instances_database_changelist'))
 
 
 @admin.register(MonitoringMetrics)

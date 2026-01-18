@@ -8,6 +8,23 @@
       flex-direction: column;
       gap: 16px;
     }
+    .action-bar {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 12px;
+    }
+    .action-bar .button {
+      background: #2c6faa;
+      color: #fff;
+      border: none;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .action-bar .button:hover {
+      background: #245c8a;
+    }
     details.instance-card {
       border: 1px solid #e0e0e0;
       border-radius: 6px;
@@ -37,6 +54,13 @@
       color: #666;
     }
   </style>
+
+  <div class="action-bar">
+    <form method="post" action="{{ refresh_url }}">
+      {% csrf_token %}
+      <button type="submit" class="button">刷新所有实例与数据库</button>
+    </form>
+  </div>
 
   <div class="instance-list">
     {% for instance in instances %}
