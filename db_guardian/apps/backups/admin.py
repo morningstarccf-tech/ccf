@@ -736,7 +736,8 @@ class BackupRecordAdmin(admin.ModelAdmin):
         ]
         return custom_urls + urls
 
-    def _infer_backup_filename(self, record):
+    def _infer_backup_filenames(self, record):
+        names = []
         for path_value in [record.file_path, record.remote_path, record.object_storage_path]:
             if not path_value:
                 continue
@@ -746,14 +747,50 @@ class BackupRecordAdmin(admin.ModelAdmin):
                 if key:
                     name = Path(key).name
                     if name not in ('', '.', '..'):
-                        return name
+                        names.append(name)
+                        continue
             name = Path(path_value).name
             if name not in ('', '.', '..'):
-                return name
-        return f"backup_{record.id}.sql"
+                names.append(name)
+
+        unique = []
+        for name in names:
+            if name not in unique:
+                unique.append(name)
+
+        if unique:
+            return unique
+
+        timestamp = None
+        if record.start_time:
+            timestamp = record.start_time.strftime('%Y%m%d_%H%M%S')
+        elif record.created_at:
+            timestamp = record.created_at.strftime('%Y%m%d_%H%M%S')
+
+        db_suffix = record.database_name or 'all'
+        alias = record.instance.alias if record.instance else 'backup'
+        candidates = []
+        if timestamp:
+            base = f"{alias}_{db_suffix}_{timestamp}.sql"
+            if record.strategy and not record.strategy.compress:
+                candidates.append(base)
+                candidates.append(base + '.gz')
+            else:
+                candidates.append(base + '.gz')
+                candidates.append(base)
+        candidates.append(f"backup_{record.id}.sql.gz")
+        candidates.append(f"backup_{record.id}.sql")
+
+        unique = []
+        for name in candidates:
+            if name not in unique:
+                unique.append(name)
+        return unique
 
     def _prepare_download_path(self, record):
         errors = []
+
+        filenames = self._infer_backup_filenames(record)
 
         if record.file_path:
             file_path = Path(record.file_path)
@@ -763,6 +800,10 @@ class BackupRecordAdmin(admin.ModelAdmin):
                 if file_path.name in ('', '.', '..'):
                     errors.append(f"本地文件路径无效: {file_path}")
                 else:
+                    for name in filenames:
+                        candidate = file_path / name
+                        if candidate.exists() and candidate.is_file():
+                            return candidate
                     errors.append(f"本地路径是目录: {file_path}")
             else:
                 errors.append(f"本地文件不存在: {file_path}")
@@ -772,26 +813,37 @@ class BackupRecordAdmin(admin.ModelAdmin):
         backup_root = Path(getattr(settings, 'BACKUP_STORAGE_PATH', settings.BASE_DIR / 'backups'))
         temp_dir = backup_root / 'tmp'
         temp_dir.mkdir(parents=True, exist_ok=True)
-        filename = self._infer_backup_filename(record)
-        temp_path = temp_dir / filename
+        temp_path = None
+        if filenames:
+            temp_path = temp_dir / filenames[0]
 
         if record.remote_path:
             try:
-                if record.remote_protocol:
-                    client = RemoteStorageClient(
-                        protocol=record.remote_protocol,
-                        host=record.remote_host,
-                        port=record.remote_port,
-                        user=record.remote_user,
-                        password=record.get_decrypted_remote_password(),
-                        key_path=record.remote_key_path
-                    )
-                    client.download(record.remote_path, temp_path)
+                remote_candidates = []
+                remote_path = record.remote_path
+                if Path(remote_path).suffix:
+                    remote_candidates.append(remote_path)
                 else:
-                    executor = RemoteExecutor(record.instance)
-                    executor.download(record.remote_path, temp_path)
-                if temp_path.exists() and temp_path.is_file():
-                    return temp_path
+                    for name in filenames:
+                        remote_candidates.append(str(Path(remote_path) / name))
+
+                for remote_candidate in remote_candidates:
+                    temp_path = temp_dir / Path(remote_candidate).name
+                    if record.remote_protocol:
+                        client = RemoteStorageClient(
+                            protocol=record.remote_protocol,
+                            host=record.remote_host,
+                            port=record.remote_port,
+                            user=record.remote_user,
+                            password=record.get_decrypted_remote_password(),
+                            key_path=record.remote_key_path
+                        )
+                        client.download(remote_candidate, temp_path)
+                    else:
+                        executor = RemoteExecutor(record.instance)
+                        executor.download(remote_candidate, temp_path)
+                    if temp_path.exists() and temp_path.is_file():
+                        return temp_path
                 errors.append(f"远程下载后文件仍不存在: {temp_path}")
             except Exception as exc:
                 errors.append(f"远程下载失败: {exc}")
@@ -815,9 +867,19 @@ class BackupRecordAdmin(admin.ModelAdmin):
                 }
             uploader = ObjectStorageUploader(config=oss_config)
             try:
-                uploader.download(record.object_storage_path, temp_path)
-                if temp_path.exists() and temp_path.is_file():
-                    return temp_path
+                object_path = record.object_storage_path
+                object_candidates = []
+                if object_path.endswith('/'):
+                    for name in filenames:
+                        object_candidates.append(object_path.rstrip('/') + '/' + name)
+                else:
+                    object_candidates.append(object_path)
+
+                for object_candidate in object_candidates:
+                    temp_path = temp_dir / Path(object_candidate).name
+                    uploader.download(object_candidate, temp_path)
+                    if temp_path.exists() and temp_path.is_file():
+                        return temp_path
                 errors.append(f"云存储下载后文件仍不存在: {temp_path}")
             except Exception as exc:
                 errors.append(f"云存储下载失败: {exc}")

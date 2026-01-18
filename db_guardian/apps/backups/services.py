@@ -757,6 +757,7 @@ class BackupExecutor:
                 'error_message': remote_error or '远程备份上传失败，请检查远程路径与 SSH 配置'
             }
 
+        file_path_value = str(final_path) if store_local else ''
         if not store_local:
             if final_path.exists():
                 final_path.unlink()
@@ -764,7 +765,7 @@ class BackupExecutor:
 
         return {
             'success': True,
-            'file_path': str(final_path) if str(final_path) else '',
+            'file_path': file_path_value,
             'file_size_mb': round(file_size_mb, 2),
             'remote_path': remote_path or '',
             'object_storage_path': object_storage_path or ''
@@ -887,12 +888,13 @@ class BackupExecutor:
                 config=oss_config
             ) or ''
 
+        file_path_value = str(local_path) if store_local else ''
         if not store_local and local_path.exists():
             local_path.unlink()
             local_path = Path('')
         return {
             'success': True,
-            'file_path': str(local_path) if str(local_path) else '',
+            'file_path': file_path_value,
             'file_size_mb': round(file_size_mb, 2),
             'remote_path': remote_keep_path or '',
             'object_storage_path': object_storage_path or ''
@@ -987,12 +989,13 @@ class BackupExecutor:
                 config=oss_config
             ) or ''
 
+        file_path_value = str(local_path) if store_local else ''
         if not store_local and local_path.exists():
             local_path.unlink()
             local_path = Path('')
         return {
             'success': True,
-            'file_path': str(local_path) if str(local_path) else '',
+            'file_path': file_path_value,
             'file_size_mb': round(file_size_mb, 2),
             'remote_path': remote_keep_path or '',
             'object_storage_path': object_storage_path or ''
@@ -1087,12 +1090,13 @@ class BackupExecutor:
                 config=oss_config
             ) or ''
 
+        file_path_value = str(local_path) if store_local else ''
         if not store_local and local_path.exists():
             local_path.unlink()
             local_path = Path('')
         return {
             'success': True,
-            'file_path': str(local_path) if str(local_path) else '',
+            'file_path': file_path_value,
             'file_size_mb': round(file_size_mb, 2),
             'remote_path': remote_keep_path or '',
             'object_storage_path': object_storage_path or ''
