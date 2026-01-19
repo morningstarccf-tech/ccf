@@ -64,28 +64,19 @@
     display: none;
   }
 
-  .aurora-login__topbar {
-    position: absolute;
-    top: 18px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: rgba(255, 255, 255, 0.9);
-    font-size: 13px;
-    letter-spacing: 0.3px;
+  .aurora-login__content {
+    position: relative;
     z-index: 2;
-  }
-
-  .aurora-login__topbar span {
-    font-weight: 600;
+    width: min(520px, 92vw);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
   }
 
   .aurora-login__card {
     position: relative;
-    z-index: 2;
-    width: min(500px, 92vw);
+    width: 100%;
     background: var(--aurora-card-bg);
     border-radius: 20px;
     border: 1px solid var(--aurora-card-border);
@@ -96,32 +87,55 @@
 
   .aurora-login__brand {
     display: flex;
+    flex-direction: column;
     align-items: center;
+    text-align: center;
     gap: 14px;
-    margin-bottom: 14px;
   }
 
   .aurora-login__logo {
-    width: 44px;
-    height: 44px;
-    border-radius: 12px;
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
     display: grid;
     place-items: center;
     background: #1a1622;
     color: #fff;
-    font-size: 20px;
+    font-size: 22px;
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
   }
 
   .aurora-login__title {
     font-size: 22px;
     font-weight: 700;
-    color: var(--aurora-text);
+    color: #ffffff;
+    text-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
   }
 
   .aurora-login__subtitle {
-    color: #606068;
+    color: rgba(255, 255, 255, 0.88);
     font-size: 14px;
     margin-top: 4px;
+    text-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  }
+
+  .aurora-login__card-title {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 16px;
+  }
+
+  .aurora-login__card-title h2 {
+    margin: 0;
+    font-size: 18px;
+    color: var(--aurora-text);
+  }
+
+  .aurora-login__card-title p {
+    margin: 0;
+    font-size: 13px;
+    color: #6a6a74;
   }
 
   .aurora-login__form {
@@ -262,18 +276,19 @@
 {% block content %}
 <div class="aurora-login__wrapper">
   <div class="aurora-login__overlay"></div>
-  <div class="aurora-login__topbar">
-    <span>MySQL Backup Software</span>
-  </div>
   <div id="petal-container"></div>
-  <div class="aurora-login__card">
+  <div class="aurora-login__content">
     <div class="aurora-login__brand">
       <div class="aurora-login__logo">🗄️</div>
-      <div>
-        <div class="aurora-login__title">AuroraVault</div>
-        <div class="aurora-login__subtitle">安全、简单的数据库备份解决方案</div>
-      </div>
+      <div class="aurora-login__title">AuroraVault</div>
+      <div class="aurora-login__subtitle">安全、简单的数据库备份解决方案</div>
     </div>
+
+    <div class="aurora-login__card">
+      <div class="aurora-login__card-title">
+        <h2>{% trans "登录" %}</h2>
+        <p>{% trans "请输入您的凭据以访问备份管理系统" %}</p>
+      </div>
 
     {% if form.errors and not form.non_field_errors %}
       <div class="aurora-login__error">
@@ -325,6 +340,7 @@
 
     <div class="aurora-login__help">
       {% trans "请输入您的账号以访问管理系统。" %}
+    </div>
     </div>
   </div>
 </div>
