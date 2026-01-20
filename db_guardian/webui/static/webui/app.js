@@ -4,6 +4,7 @@ const state = {
   user: null,
   instances: [],
   teams: [],
+  sqlLastResult: null,
 };
 
 const view = document.getElementById("view");
@@ -31,6 +32,27 @@ const routes = {
   account: { title: "修改密码", render: renderAccount },
 };
 
+async function downloadWithAuth(url) {
+  const response = await fetch(url, {
+    headers: state.access ? { Authorization: `Bearer ${state.access}` } : {},
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(formatApiError(data) || "下载失败");
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename\\*?=(?:UTF-8''|\"?)([^\";]+)/i);
+  const filename = match ? decodeURIComponent(match[1]) : "backup.sql";
+  const link = document.createElement("a");
+  link.href = window.URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(link.href);
+}
+
 function setActiveNav(route) {
   document.querySelectorAll(".nav-link").forEach((link) => {
     link.classList.toggle("active", link.getAttribute("href") === `#${route}`);
@@ -42,15 +64,31 @@ function showLogin(show) {
   document.getElementById("app").style.display = show ? "none" : "flex";
 }
 
-function escapeHtml(value) {
-  if (value === null || value === undefined) return "";
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
+  function escapeHtml(value) {
+    if (value === null || value === undefined) return "";
+    return String(value)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+  }
+
+  function formatApiError(data) {
+    if (!data || typeof data !== "object") return "";
+    if (data.detail) return String(data.detail);
+    if (data.message) return String(data.message);
+    if (data.errors) return JSON.stringify(data.errors);
+    const entries = Object.entries(data);
+    if (!entries.length) return "";
+    return entries
+      .map(([key, value]) => {
+        if (Array.isArray(value)) return `${key}: ${value.join("，")}`;
+        if (typeof value === "object") return `${key}: ${JSON.stringify(value)}`;
+        return `${key}: ${value}`;
+      })
+      .join("；");
+  }
 
 async function apiFetch(path, options = {}) {
   const headers = options.headers || {};
@@ -68,14 +106,21 @@ async function apiFetch(path, options = {}) {
       return apiFetch(path, options);
     }
   }
-  if (response.status === 204) return null;
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = data.detail || data.message || "请求失败";
-    throw new Error(message);
+    if (response.status === 204) return null;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = formatApiError(data) || "请求失败";
+      throw new Error(message);
+    }
+    return data;
   }
-  return data;
-}
+
+  async function ensureInstances() {
+    if (state.instances.length) return state.instances;
+    const data = await apiFetch("/api/instances/");
+    state.instances = normalizeList(data);
+    return state.instances;
+  }
 
 async function refreshToken() {
   try {
@@ -265,47 +310,89 @@ async function renderInstances() {
   });
 }
 
-async function renderDatabases() {
-  if (!state.instances.length) {
-    await renderInstances();
-  }
-  const options = state.instances
-    .map((i) => `<option value="${i.id}">${escapeHtml(i.alias)}</option>`)
-    .join("");
-  setView(
-    "数据库",
-    `<div class="card">
-      <div class="toolbar">
-        <label>实例：
-          <select id="db-instance">${options}</select>
-        </label>
-        <button class="ghost" id="db-refresh">刷新</button>
-      </div>
-      <div id="db-table"></div>
-    </div>`
-  );
-  const select = document.getElementById("db-instance");
-  const load = async () => {
-    const list = await apiFetch(`/api/instances/${select.value}/databases/?refresh=1`);
-    const rows = normalizeList(list)
+  async function renderDatabases() {
+    await ensureInstances();
+    const cards = state.instances
       .map(
-        (db) => `<tr><td>${escapeHtml(db.name)}</td><td>${db.table_count}</td><td>${db.size_mb}</td></tr>`
+        (instance) => `
+        <details class="db-instance" data-id="${instance.id}">
+          <summary>
+            <span>${escapeHtml(instance.alias)} (${escapeHtml(instance.host)}:${escapeHtml(instance.port)})</span>
+            <span class="tag">${escapeHtml(instance.status || "")}</span>
+          </summary>
+          <div class="db-body">
+            <div class="toolbar">
+              <button class="ghost" data-action="refresh">刷新</button>
+            </div>
+            <div class="db-table"><span class="muted">展开后加载数据库列表</span></div>
+          </div>
+        </details>
+      `
       )
       .join("");
-    document.getElementById("db-table").innerHTML = `
-      <table>
-        <thead><tr><th>数据库</th><th>表数量</th><th>大小(MB)</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
-  };
-  document.getElementById("db-refresh").onclick = load;
-  await load();
-}
 
-async function renderMetrics() {
-  if (!state.instances.length) {
-    await renderInstances();
+    setView(
+      "数据库",
+      `<div class="card">
+        <div class="toolbar">
+          <button class="ghost" id="db-refresh-all">刷新全部</button>
+        </div>
+        <div id="db-accordion">
+          ${cards || '<p class="muted">暂无实例</p>'}
+        </div>
+      </div>`
+    );
+
+    async function loadInstance(details, force = true) {
+      const id = details.dataset.id;
+      const table = details.querySelector(".db-table");
+      table.innerHTML = `<span class="muted">加载中...</span>`;
+      try {
+        const list = await apiFetch(`/api/instances/${id}/databases/?refresh=${force ? 1 : 0}`);
+        const rows = normalizeList(list)
+          .map(
+            (db) =>
+              `<tr><td>${escapeHtml(db.name)}</td><td>${db.table_count}</td><td>${db.size_mb}</td></tr>`
+          )
+          .join("");
+        table.innerHTML = `
+          <table>
+            <thead><tr><th>数据库</th><th>表数量</th><th>大小(MB)</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+        details.dataset.loaded = "true";
+      } catch (err) {
+        table.innerHTML = `<span class="error-text">加载失败：${escapeHtml(err.message)}</span>`;
+      }
+    }
+
+    document.querySelectorAll(".db-instance").forEach((details) => {
+      const refreshBtn = details.querySelector('[data-action="refresh"]');
+      refreshBtn.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        loadInstance(details, true);
+      };
+      details.addEventListener("toggle", () => {
+        if (details.open && !details.dataset.loaded) {
+          loadInstance(details, true);
+        }
+      });
+    });
+
+    const refreshAll = document.getElementById("db-refresh-all");
+    if (refreshAll) {
+      refreshAll.onclick = async () => {
+        const all = Array.from(document.querySelectorAll(".db-instance"));
+        for (const details of all) {
+          await loadInstance(details, true);
+        }
+      };
+    }
   }
+
+  async function renderMetrics() {
+    await ensureInstances();
   const options = state.instances
     .map((i) => `<option value="${i.id}">${escapeHtml(i.alias)}</option>`)
     .join("");
@@ -354,43 +441,111 @@ async function renderMetrics() {
     `;
   };
   document.getElementById("metrics-refresh").onclick = load;
-  await load();
-}
-
-async function renderSqlTerminal() {
-  if (!state.instances.length) {
-    await renderInstances();
+    await load();
   }
-  const options = state.instances
-    .map((i) => `<option value="${i.id}">${escapeHtml(i.alias)}</option>`)
-    .join("");
-  setView(
-    "SQL 终端",
-    `<div class="card">
-      <div class="toolbar">
-        <label>实例：
-          <select id="sql-instance">${options}</select>
-        </label>
-        <label>数据库：
-          <input id="sql-db" placeholder="可选" />
-        </label>
-        <button class="primary" id="sql-run">执行</button>
-      </div>
-      <textarea id="sql-text" style="width:100%;min-height:140px;" placeholder="输入 SQL"></textarea>
-      <pre id="sql-output" style="margin-top:12px;"></pre>
-    </div>`
-  );
-  document.getElementById("sql-run").onclick = async () => {
-    const instanceId = document.getElementById("sql-instance").value;
-    const sql = document.getElementById("sql-text").value;
-    const database = document.getElementById("sql-db").value;
-    const result = await apiFetch(`/api/instances/${instanceId}/query/`, {
-      method: "POST",
-      body: JSON.stringify({ sql, database }),
+
+  function buildAsciiTable(columns, rows) {
+    if (!columns || !columns.length) return "(无结果)";
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const widths = columns.map((col) => {
+      const headerLen = String(col).length;
+      const rowLen = safeRows.reduce((max, row) => {
+        const value = row && row[col] !== undefined ? String(row[col]) : "";
+        return Math.max(max, value.length);
+      }, 0);
+      return Math.max(headerLen, rowLen);
     });
-    document.getElementById("sql-output").textContent = JSON.stringify(result, null, 2);
-  };
-}
+    const line = "+" + widths.map((w) => "-".repeat(w + 2)).join("+") + "+";
+    const formatRow = (values) =>
+      "|" +
+      values
+        .map((value, idx) => {
+          const text = String(value ?? "");
+          return ` ${text}${" ".repeat(widths[idx] - text.length)} `;
+        })
+        .join("|") +
+      "|";
+    const header = formatRow(columns);
+    const body = safeRows.map((row) => formatRow(columns.map((c) => row?.[c] ?? ""))).join("\n");
+    return [line, header, line, body || "", line].filter(Boolean).join("\n");
+  }
+
+  function renderSqlOutput(result, mode) {
+    const output = document.getElementById("sql-output");
+    if (!output) return;
+    if (!result) {
+      output.textContent = "";
+      return;
+    }
+    if (mode === "json") {
+      output.textContent = JSON.stringify(result, null, 2);
+      return;
+    }
+    const rows = Array.isArray(result.data) ? result.data.length : 0;
+    const affected = result.rows_affected ?? rows;
+    const elapsed = result.execution_time_ms ?? 0;
+    const type = result.sql_type || "SQL";
+    const meta = `OK (${type}) rows=${affected} time=${elapsed}ms`;
+    const table = buildAsciiTable(result.columns || [], result.data || []);
+    output.textContent = `${meta}\n${table}`;
+  }
+
+  async function renderSqlTerminal() {
+    await ensureInstances();
+    const options = state.instances
+      .map((i) => `<option value="${i.id}">${escapeHtml(i.alias)}</option>`)
+      .join("");
+    setView(
+      "SQL 终端",
+      `<div class="card">
+        <div class="toolbar">
+          <label>实例：
+            <select id="sql-instance">${options}</select>
+          </label>
+          <label>数据库：
+            <input id="sql-db" placeholder="可选" />
+          </label>
+          <label>输出：
+            <select id="sql-output-mode">
+              <option value="table">表格输出</option>
+              <option value="json">JSON 输出</option>
+            </select>
+          </label>
+          <button class="primary" id="sql-run">执行</button>
+        </div>
+        <textarea id="sql-text" style="width:100%;min-height:140px;" placeholder="输入 SQL"></textarea>
+        <pre id="sql-output" style="margin-top:12px;"></pre>
+      </div>`
+    );
+    const modeSelect = document.getElementById("sql-output-mode");
+    const savedMode = localStorage.getItem("av_sql_output") || "table";
+    modeSelect.value = savedMode;
+    modeSelect.onchange = () => {
+      localStorage.setItem("av_sql_output", modeSelect.value);
+      renderSqlOutput(state.sqlLastResult, modeSelect.value);
+    };
+    document.getElementById("sql-run").onclick = async () => {
+      const instanceId = document.getElementById("sql-instance").value;
+      const sql = document.getElementById("sql-text").value.trim();
+      const rawDb = document.getElementById("sql-db").value.trim();
+      const database = rawDb.replace(/;+\s*$/, "");
+      if (!sql) {
+        document.getElementById("sql-output").textContent = "ERROR: 请输入 SQL 语句";
+        return;
+      }
+      try {
+        const result = await apiFetch(`/api/instances/${instanceId}/query/`, {
+          method: "POST",
+          body: JSON.stringify({ sql, database }),
+        });
+        state.sqlLastResult = result;
+        renderSqlOutput(result, modeSelect.value);
+      } catch (err) {
+        state.sqlLastResult = null;
+        document.getElementById("sql-output").textContent = `ERROR: ${err.message || "执行失败"}`;
+      }
+    };
+  }
 
 async function renderSqlHistory() {
   const data = await apiFetch("/api/sql/history/");
@@ -510,12 +665,16 @@ async function renderBackupRecords() {
   );
   view.querySelectorAll("button[data-action]").forEach((btn) => {
     btn.onclick = async () => {
-      const id = btn.dataset.id;
-      const action = btn.dataset.action;
-      if (action === "download") {
-        window.open(`/api/backups/records/${id}/download/`, "_blank");
-      }
-      if (action === "restore") {
+        const id = btn.dataset.id;
+        const action = btn.dataset.action;
+        if (action === "download") {
+          try {
+            await downloadWithAuth(`/api/backups/records/${id}/download/`);
+          } catch (err) {
+            alert(err.message || "下载失败");
+          }
+        }
+        if (action === "restore") {
         const target = prompt("目标数据库（可选）");
         await apiFetch(`/api/backups/records/${id}/restore/`, {
           method: "POST",
@@ -592,7 +751,7 @@ async function renderBackupTasks() {
   });
 }
 
-async function renderBackupRestore() {
+  async function renderBackupRestore() {
   const records = await apiFetch("/api/backups/records/?status=success&ordering=-created_at");
   const rows = normalizeList(records)
     .map(
@@ -630,12 +789,16 @@ async function renderBackupRestore() {
 
   view.querySelectorAll("button[data-action]").forEach((btn) => {
     btn.onclick = async () => {
-      const id = btn.dataset.id;
-      const action = btn.dataset.action;
-      if (action === "download") {
-        window.open(`/api/backups/records/${id}/download/`, "_blank");
-      }
-      if (action === "restore") {
+        const id = btn.dataset.id;
+        const action = btn.dataset.action;
+        if (action === "download") {
+          try {
+            await downloadWithAuth(`/api/backups/records/${id}/download/`);
+          } catch (err) {
+            alert(err.message || "下载失败");
+          }
+        }
+        if (action === "restore") {
         const target = prompt("目标数据库（可选）");
         await apiFetch(`/api/backups/records/${id}/restore/`, {
           method: "POST",

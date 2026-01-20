@@ -178,6 +178,35 @@ main#view {
   font-size: 12px;
 }
 
+.muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.db-instance {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.db-instance summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  list-style: none;
+}
+
+.db-instance summary::-webkit-details-marker {
+  display: none;
+}
+
+.db-body {
+  margin-top: 12px;
+}
+
 .metrics-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
