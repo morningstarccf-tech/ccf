@@ -657,25 +657,77 @@ async function renderBackupRestore() {
 }
 
 async function renderAuthUsers() {
-  const data = await apiFetch("/api/auth/users/");
-  const rows = normalizeList(data)
-    .map(
-      (u) => `<tr>
+  let data = [];
+  let teams = [];
+  let roles = [];
+  try {
+    data = normalizeList(await apiFetch("/api/auth/users/"));
+    teams = normalizeList(await apiFetch("/api/auth/teams/"));
+    roles = normalizeList(await apiFetch("/api/auth/roles/"));
+  } catch (err) {
+    setView("用户", `<div class="card"><p>加载失败：${escapeHtml(err.message)}</p></div>`);
+    return;
+  }
+
+  const canManageUsers = state.user && state.user.is_superuser;
+  const rows = data
+    .map((u) => {
+      const canEdit = canManageUsers || (state.user && u.id === state.user.id);
+      return `<tr>
         <td>${escapeHtml(u.username)}</td>
         <td>${escapeHtml(u.email || "")}</td>
         <td>${u.is_active ? "启用" : "停用"}</td>
         <td>
-          <button class="ghost" data-action="edit" data-id="${u.id}">编辑</button>
-          <button class="danger" data-action="delete" data-id="${u.id}">删除</button>
+          ${canEdit ? `<button class="ghost" data-action="edit" data-id="${u.id}">编辑</button>` : ""}
+          ${canManageUsers ? `<button class="danger" data-action="delete" data-id="${u.id}">删除</button>` : ""}
         </td>
-      </tr>`
-    )
+      </tr>`;
+    })
     .join("");
+
+  const teamOptions = teams
+    .map((t) => `<option value="${t.id}">${escapeHtml(t.name)}</option>`)
+    .join("");
+  const roleOptions = roles
+    .map((r) => `<option value="${r.id}">${escapeHtml(r.name)}</option>`)
+    .join("");
+
   setView(
     "用户",
     `<div class="card">
       <div class="toolbar">
-        <button class="primary" id="add-user">新增用户</button>
+        ${canManageUsers ? `<button class="primary" id="add-user">新增用户</button>` : `<span class="tag">仅超级管理员可新增/删除用户</span>`}
+      </div>
+      <div id="user-form-panel" class="hidden">
+        <h3 id="user-form-title">新增用户</h3>
+        <form id="user-form">
+          <div class="form-grid">
+            <label>用户名<input name="username" required></label>
+            <label>邮箱<input name="email" type="email" required></label>
+            <label>手机号<input name="phone"></label>
+            <label>初始密码<input name="password" type="password" required></label>
+            <label>激活状态
+              <select name="is_active">
+                <option value="true">启用</option>
+                <option value="false">停用</option>
+              </select>
+            </label>
+            <label>所属团队（可选）
+              <select name="team_ids" multiple>${teamOptions}</select>
+            </label>
+            <label>角色（团队必填）
+              <select name="role_id">
+                <option value="">请选择角色</option>
+                ${roleOptions}
+              </select>
+            </label>
+          </div>
+          <div class="toolbar">
+            <button class="primary" type="submit">保存</button>
+            <button class="ghost" type="button" id="cancel-user-form">取消</button>
+          </div>
+          <div class="error-text" id="user-form-error"></div>
+        </form>
       </div>
       <table>
         <thead><tr><th>用户名</th><th>邮箱</th><th>状态</th><th>操作</th></tr></thead>
@@ -683,26 +735,98 @@ async function renderAuthUsers() {
       </table>
     </div>`
   );
-  document.getElementById("add-user").onclick = () => {
-    renderJsonEditor("新增用户", { username: "", password: "" }, async (value) => {
-      await apiFetch("/api/auth/users/", { method: "POST", body: JSON.stringify(value) });
-      await renderAuthUsers();
-    });
+
+  const panel = document.getElementById("user-form-panel");
+  const form = document.getElementById("user-form");
+  const errorBox = document.getElementById("user-form-error");
+
+  function showForm(mode, user) {
+    panel.classList.remove("hidden");
+    errorBox.textContent = "";
+    document.getElementById("user-form-title").textContent = mode === "edit" ? "编辑用户" : "新增用户";
+    form.reset();
+
+    if (mode === "edit") {
+      form.username.value = user.username || "";
+      form.email.value = user.email || "";
+      form.phone.value = user.phone || "";
+      form.is_active.value = user.is_active ? "true" : "false";
+      form.password.value = "";
+      form.username.disabled = true;
+      form.password.disabled = true;
+      form.team_ids.disabled = true;
+      form.role_id.disabled = true;
+    } else {
+      form.username.disabled = false;
+      form.password.disabled = false;
+      form.team_ids.disabled = false;
+      form.role_id.disabled = false;
+    }
+
+    form.dataset.mode = mode;
+    form.dataset.userId = user ? user.id : "";
+  }
+
+  if (canManageUsers) {
+    document.getElementById("add-user").onclick = () => showForm("create");
+  }
+
+  document.getElementById("cancel-user-form").onclick = () => {
+    panel.classList.add("hidden");
   };
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    errorBox.textContent = "";
+    const payload = {
+      username: form.username.value.trim(),
+      email: form.email.value.trim(),
+      phone: form.phone.value.trim(),
+      is_active: form.is_active.value === "true",
+    };
+    const mode = form.dataset.mode;
+
+    try {
+      if (mode === "create") {
+        payload.password = form.password.value;
+        const selectedTeams = Array.from(form.team_ids.selectedOptions).map((o) => Number(o.value));
+        if (selectedTeams.length) {
+          payload.team_ids = selectedTeams;
+          if (!form.role_id.value) {
+            errorBox.textContent = "选择团队时必须指定角色";
+            return;
+          }
+          payload.role_id = Number(form.role_id.value);
+        }
+        await apiFetch("/api/auth/users/", { method: "POST", body: JSON.stringify(payload) });
+      } else if (mode === "edit") {
+        const userId = form.dataset.userId;
+        await apiFetch(`/api/auth/users/${userId}/`, { method: "PATCH", body: JSON.stringify(payload) });
+      }
+      panel.classList.add("hidden");
+      await renderAuthUsers();
+    } catch (err) {
+      errorBox.textContent = err.message || "保存失败";
+    }
+  };
+
   view.querySelectorAll("button[data-action]").forEach((btn) => {
     btn.onclick = async () => {
-      const id = btn.dataset.id;
+      const id = Number(btn.dataset.id);
       const action = btn.dataset.action;
-      if (action === "edit") {
-        renderJsonEditor("编辑用户", { email: "", phone: "" }, async (value) => {
-          await apiFetch(`/api/auth/users/${id}/`, { method: "PATCH", body: JSON.stringify(value) });
-          await renderAuthUsers();
-        });
+      const target = data.find((u) => u.id === id);
+      if (action === "edit" && target) {
+        showForm("edit", target);
+        return;
       }
       if (action === "delete") {
         if (!confirm("确认删除该用户？")) return;
-        await apiFetch(`/api/auth/users/${id}/`, { method: "DELETE" });
-        await renderAuthUsers();
+        try {
+          await apiFetch(`/api/auth/users/${id}/`, { method: "DELETE" });
+          await renderAuthUsers();
+        } catch (err) {
+          alert(err.message || "删除失败");
+        }
       }
     };
   });
