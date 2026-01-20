@@ -644,8 +644,8 @@ class BackupOneOffTaskViewSet(viewsets.ModelViewSet):
         # 使用 ETA 调度
         try:
             execute_oneoff_backup_task = __import__('apps.backups.tasks', fromlist=['execute_oneoff_backup_task']).execute_oneoff_backup_task
-            execute_oneoff_backup_task.apply_async((task.id,), eta=task.run_at)
-            task.task_id = execute_oneoff_backup_task.request.id if hasattr(execute_oneoff_backup_task, 'request') else task.task_id
+            async_result = execute_oneoff_backup_task.apply_async((task.id,), eta=task.run_at)
+            task.task_id = async_result.id
             task.save(update_fields=['task_id'])
         except Exception as exc:
             logger.warning(f"定时任务调度失败: {exc}")
