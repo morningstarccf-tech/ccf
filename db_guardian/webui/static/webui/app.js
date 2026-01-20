@@ -324,16 +324,34 @@ async function renderMetrics() {
   const select = document.getElementById("metrics-instance");
   const load = async () => {
     const data = await apiFetch(`/api/instances/${select.value}/metrics/?hours=24`);
-    const rows = normalizeList(data)
-      .map(
-        (m) => `<tr><td>${escapeHtml(m.timestamp)}</td><td>${m.cpu_usage}</td><td>${m.memory_usage}</td><td>${m.disk_usage}</td></tr>`
-      )
-      .join("");
+    const list = normalizeList(data);
+    const latest = list[0];
+    if (!latest) {
+      document.getElementById("metrics-list").innerHTML = `<p>暂无监控数据</p>`;
+      return;
+    }
+
+    const cpu = Number(latest.cpu_usage || 0);
+    const mem = Number(latest.memory_usage || 0);
+    const disk = Number(latest.disk_usage || 0);
+
+    const chart = (value, label) => `
+      <div class="metric-card">
+        <div class="pie" style="--value:${Math.min(100, Math.max(0, value))};"></div>
+        <div class="metric-info">
+          <span>${label}</span>
+          <strong>${value.toFixed(1)}%</strong>
+        </div>
+      </div>`;
+
     document.getElementById("metrics-list").innerHTML = `
-      <table>
-        <thead><tr><th>时间</th><th>CPU</th><th>内存</th><th>磁盘</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
+      <div class="metrics-grid">
+        ${chart(cpu, "CPU")}
+        ${chart(mem, "内存")}
+        ${chart(disk, "磁盘")}
+      </div>
+      <div class="metric-meta">更新时间：${escapeHtml(latest.timestamp)}</div>
+    `;
   };
   document.getElementById("metrics-refresh").onclick = load;
   await load();
@@ -575,9 +593,31 @@ async function renderBackupTasks() {
 }
 
 async function renderBackupRestore() {
+  const records = await apiFetch("/api/backups/records/?status=success&ordering=-created_at");
+  const rows = normalizeList(records)
+    .map(
+      (r) => `<tr>
+        <td>${escapeHtml(r.instance_alias)}</td>
+        <td>${escapeHtml(r.backup_type_display)}</td>
+        <td>${escapeHtml(r.created_at)}</td>
+        <td>
+          <button class="ghost" data-action="restore" data-id="${r.id}">从记录恢复</button>
+          <button class="ghost" data-action="download" data-id="${r.id}">下载</button>
+        </td>
+      </tr>`
+    )
+    .join("");
+
   setView(
     "恢复",
     `<div class="card">
+      <h3>从备份记录恢复</h3>
+      <table>
+        <thead><tr><th>实例</th><th>类型</th><th>时间</th><th>操作</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div class="card">
       <h3>上传备份文件恢复</h3>
       <form id="restore-upload">
         <label>实例ID <input name="instance_id" required></label>
@@ -587,6 +627,25 @@ async function renderBackupRestore() {
       </form>
     </div>`
   );
+
+  view.querySelectorAll("button[data-action]").forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.dataset.id;
+      const action = btn.dataset.action;
+      if (action === "download") {
+        window.open(`/api/backups/records/${id}/download/`, "_blank");
+      }
+      if (action === "restore") {
+        const target = prompt("目标数据库（可选）");
+        await apiFetch(`/api/backups/records/${id}/restore/`, {
+          method: "POST",
+          body: JSON.stringify({ target_database: target || "", confirm: true }),
+        });
+        alert("恢复任务已提交");
+      }
+    };
+  });
+
   document.getElementById("restore-upload").onsubmit = async (e) => {
     e.preventDefault();
     const form = e.target;
