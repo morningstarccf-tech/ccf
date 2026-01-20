@@ -199,50 +199,240 @@ th {
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(7, 10, 18, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  z-index: 999;
 }
 
 .overlay.hidden {
   display: none;
 }
 
-.login-card {
-  background: #fff;
-  color: #1a1a1f;
-  padding: 28px;
-  border-radius: 16px;
-  min-width: 320px;
+.av-login {
+  position: relative;
+  min-height: 100vh;
+  width: 100%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: url("/static/login/plo.jpg") center/cover no-repeat;
+  background-color: #0f0b14;
 }
 
-.login-card h3 {
-  margin: 0 0 4px;
+.av-login::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(8, 8, 12, 0.2), rgba(8, 8, 12, 0));
+  pointer-events: none;
 }
 
-.login-card p {
-  margin: 0 0 16px;
-  color: #555;
+.av-panel {
+  position: relative;
+  z-index: 2;
+  width: min(520px, 92vw);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
 }
 
-.login-card label {
-  display: block;
+.av-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+}
+
+.av-logo {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: #1a1622;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
+}
+
+.av-logo svg {
+  width: 26px;
+  height: 26px;
+  fill: none;
+  stroke: #fff;
+  stroke-width: 1.6;
+}
+
+.av-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #ffffff;
+  text-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.av-subtitle {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.88);
+  text-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.av-card {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 0 18px 60px rgba(17, 16, 22, 0.28);
+  padding: 26px 28px 24px;
+  backdrop-filter: blur(8px);
+}
+
+.av-card__head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.av-card__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+  color: #1c1c22;
+  font-weight: 700;
+}
+
+.av-card__title svg {
+  width: 18px;
+  height: 18px;
+  stroke: #1c1c22;
+}
+
+.av-card__desc {
+  margin: 0;
+  font-size: 13px;
+  color: #6a6a74;
+}
+
+.av-error {
+  background: #ffe9ec;
+  border: 1px solid #ffb7c0;
+  color: #a21b32;
+  padding: 10px 12px;
+  border-radius: 8px;
   font-size: 13px;
   margin-bottom: 12px;
 }
 
-.login-card input {
-  width: 100%;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid #ddd;
+.av-error.hidden {
+  display: none;
 }
 
-.login-error {
-  color: #d93025;
-  margin-top: 10px;
-  font-size: 12px;
+.av-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.av-field label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4a4a55;
+}
+
+.av-input {
+  position: relative;
+}
+
+.av-input__icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  stroke: #8b8b94;
+}
+
+.av-input input {
+  width: 100%;
+  padding: 12px 14px 12px 40px;
+  border-radius: 10px;
+  border: 1px solid #e4e4ea;
+  background: #f3f3f6;
+  font-size: 14px;
+  color: #222;
+  box-sizing: border-box;
+}
+
+.av-input input:focus {
+  outline: none;
+  border-color: #7a7480;
+  box-shadow: 0 0 0 3px rgba(122, 116, 128, 0.18);
+}
+
+.av-button {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: none;
+  background: #7a7480;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 6px;
+}
+
+.av-button:hover {
+  background: #6b6571;
+}
+
+#petal-container {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.petal {
+  position: absolute;
+  bottom: -10vh;
+  width: 12px;
+  height: 8px;
+  border-radius: 50% 50% 50% 50%;
+  opacity: 0.85;
+  filter: blur(0.3px);
+  animation-name: petal-float;
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+}
+
+@keyframes petal-float {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate3d(var(--drift), -120vh, 0) rotate(360deg);
+    opacity: 0;
+  }
+}
+
+@media (max-width: 600px) {
+  .av-card {
+    padding: 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .petal {
+    animation: none;
+    display: none;
+  }
 }
 
 @media (max-width: 960px) {

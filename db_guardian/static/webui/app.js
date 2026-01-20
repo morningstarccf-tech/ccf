@@ -39,6 +39,7 @@ function setActiveNav(route) {
 
 function showLogin(show) {
   overlay.classList.toggle("hidden", !show);
+  document.getElementById("app").style.display = show ? "none" : "flex";
 }
 
 function escapeHtml(value) {
@@ -748,12 +749,14 @@ document.getElementById("refresh-view").onclick = navigate;
 loginForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   loginError.textContent = "";
+  loginError.classList.add("hidden");
   const formData = new FormData(loginForm);
   try {
     await login(formData.get("username"), formData.get("password"));
     await navigate();
   } catch (err) {
     loginError.textContent = err.message || "登录失败";
+    loginError.classList.remove("hidden");
   }
 });
 
@@ -767,3 +770,29 @@ window.addEventListener("hashchange", navigate);
   await loadUser();
   await navigate();
 })();
+
+function initPetals() {
+  const container = document.getElementById("petal-container");
+  if (!container || container.children.length) return;
+  const petalCount = 18;
+  const colors = ["rgba(255,255,255,0.9)", "rgba(255,192,203,0.9)"];
+  for (let i = 0; i < petalCount; i += 1) {
+    const petal = document.createElement("div");
+    petal.className = "petal";
+    const size = 8 + Math.random() * 10;
+    const left = Math.random() * 100;
+    const duration = 22 + Math.random() * 20;
+    const delay = -(Math.random() * duration);
+    const drift = `${(Math.random() * 80 - 40).toFixed(1)}vw`;
+    petal.style.left = `${left}vw`;
+    petal.style.width = `${size}px`;
+    petal.style.height = `${size * 0.6}px`;
+    petal.style.background = colors[Math.floor(Math.random() * colors.length)];
+    petal.style.animationDuration = `${duration}s`;
+    petal.style.animationDelay = `${delay}s`;
+    petal.style.setProperty("--drift", drift);
+    container.appendChild(petal);
+  }
+}
+
+initPetals();
