@@ -4,7 +4,7 @@
 用于备份策略、备份记录的数据序列化和验证。
 """
 from rest_framework import serializers
-from apps.backups.models import BackupStrategy, BackupRecord
+from apps.backups.models import BackupStrategy, BackupRecord, BackupOneOffTask
 from apps.instances.serializers import MySQLInstanceSerializer
 from apps.authentication.serializers import UserSerializer
 
@@ -502,3 +502,146 @@ class BackupRecordListSerializer(serializers.ModelSerializer):
         if obj.strategy_id:
             return obj.strategy.name
         return None
+
+
+class BackupOneOffTaskSerializer(serializers.ModelSerializer):
+    instance = MySQLInstanceSerializer(read_only=True)
+    created_by = UserSerializer(read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    backup_type_display = serializers.CharField(source='get_backup_type_display', read_only=True)
+
+    class Meta:
+        model = BackupOneOffTask
+        fields = [
+            'id', 'name', 'instance', 'databases', 'backup_type', 'backup_type_display',
+            'run_at', 'compress', 'storage_mode', 'storage_path', 'status', 'status_display',
+            'store_local', 'store_remote', 'store_oss',
+            'remote_storage_path', 'remote_protocol', 'remote_host', 'remote_port',
+            'remote_user', 'remote_key_path',
+            'oss_endpoint', 'oss_access_key_id', 'oss_bucket', 'oss_prefix',
+            'task_id', 'backup_record', 'error_message',
+            'created_by', 'created_at', 'started_at', 'finished_at'
+        ]
+        read_only_fields = [
+            'status', 'status_display', 'task_id', 'backup_record', 'error_message',
+            'created_by', 'created_at', 'started_at', 'finished_at'
+        ]
+
+
+class BackupOneOffTaskCreateSerializer(serializers.ModelSerializer):
+    instance_id = serializers.IntegerField(write_only=True, help_text='MySQL 实例 ID')
+    remote_password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    oss_access_key_secret = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
+    class Meta:
+        model = BackupOneOffTask
+        fields = [
+            'name', 'instance_id', 'databases', 'backup_type', 'run_at', 'compress',
+            'storage_mode', 'storage_path',
+            'store_local', 'store_remote', 'store_oss',
+            'remote_storage_path', 'remote_protocol', 'remote_host', 'remote_port',
+            'remote_user', 'remote_password', 'remote_key_path',
+            'oss_endpoint', 'oss_access_key_id', 'oss_access_key_secret',
+            'oss_bucket', 'oss_prefix'
+        ]
+
+    def validate_databases(self, value):
+        if value is not None and not isinstance(value, list):
+            raise serializers.ValidationError("数据库列表必须是数组格式")
+        return value
+
+    def validate(self, attrs):
+        from apps.instances.models import MySQLInstance
+
+        instance_id = attrs.get('instance_id')
+        backup_type = attrs.get('backup_type')
+        storage_mode = attrs.get('storage_mode')
+        if not instance_id or not backup_type:
+            return attrs
+
+        instance = MySQLInstance.objects.get(id=instance_id)
+
+        if backup_type in ['hot', 'cold', 'incremental']:
+            if not instance.data_dir:
+                raise serializers.ValidationError({
+                    'data_dir': '热备/冷备/增量备份必须配置实例数据目录'
+                })
+            if not instance.ssh_host or not instance.ssh_user:
+                raise serializers.ValidationError({
+                    'ssh_host': '热备/冷备/增量备份必须配置 SSH 连接信息'
+                })
+            if attrs.get('databases'):
+                raise serializers.ValidationError({
+                    'databases': '热备/冷备/增量备份不支持指定数据库列表'
+                })
+
+        if backup_type == 'cold':
+            if instance.deployment_type == 'docker' and not instance.docker_container_name:
+                raise serializers.ValidationError({
+                    'docker_container_name': '冷备份（Docker）必须配置容器名称'
+                })
+            if instance.deployment_type == 'systemd' and not instance.mysql_service_name:
+                raise serializers.ValidationError({
+                    'mysql_service_name': '冷备份（系统服务）必须配置服务名称'
+                })
+
+        if storage_mode:
+            attrs['store_local'] = storage_mode == 'default'
+            attrs['store_remote'] = storage_mode in ['mysql_host', 'remote_server']
+            attrs['store_oss'] = storage_mode == 'oss'
+            if storage_mode == 'default':
+                attrs['storage_path'] = ''
+            elif storage_mode == 'mysql_host':
+                if not attrs.get('remote_storage_path'):
+                    raise serializers.ValidationError({
+                        'remote_storage_path': '请填写 MySQL 服务器存储路径'
+                    })
+                if not instance.ssh_host or not instance.ssh_user:
+                    raise serializers.ValidationError({
+                        'ssh_host': 'MySQL 服务器路径需要在实例中配置 SSH 连接信息'
+                    })
+            elif storage_mode == 'remote_server':
+                if not attrs.get('remote_storage_path'):
+                    raise serializers.ValidationError({
+                        'remote_storage_path': '请填写远程服务器存储路径'
+                    })
+                if not attrs.get('remote_protocol'):
+                    raise serializers.ValidationError({
+                        'remote_protocol': '请选择远程协议'
+                    })
+                if not attrs.get('remote_host'):
+                    raise serializers.ValidationError({
+                        'remote_host': '请填写远程主机'
+                    })
+            elif storage_mode == 'oss':
+                missing = [
+                    key for key in [
+                        'oss_endpoint', 'oss_access_key_id', 'oss_access_key_secret',
+                        'oss_bucket', 'oss_prefix'
+                    ] if not attrs.get(key)
+                ]
+                if missing:
+                    raise serializers.ValidationError({
+                        'oss_endpoint': '请填写云存储配置和路径'
+                    })
+
+        return attrs
+
+    def create(self, validated_data):
+        from apps.instances.models import MySQLInstance
+
+        instance_id = validated_data.pop('instance_id')
+        instance = MySQLInstance.objects.get(id=instance_id)
+        validated_data['instance'] = instance
+        validated_data['created_by'] = self.context['request'].user
+        return BackupOneOffTask.objects.create(**validated_data)
+
+    def update(self, instance, validated_data):
+        instance_id = validated_data.pop('instance_id', None)
+        if instance_id:
+            from apps.instances.models import MySQLInstance
+            instance.instance = MySQLInstance.objects.get(id=instance_id)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        return instance

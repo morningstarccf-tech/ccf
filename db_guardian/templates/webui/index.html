@@ -1,0 +1,88 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AuroraVault 控制台</title>
+    <link rel="stylesheet" href="{% static 'webui/app.css' %}" />
+  </head>
+  <body>
+    <div id="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-icon">
+            <span>AV</span>
+          </div>
+          <div class="brand-text">
+            <h1>AuroraVault</h1>
+            <p>数据库备份与运维</p>
+          </div>
+        </div>
+
+        <nav class="nav">
+          <a href="#dashboard" class="nav-link">概览</a>
+          <div class="nav-group">MySQL 实例管理</div>
+          <a href="#instances" class="nav-link">实例列表</a>
+          <a href="#databases" class="nav-link">数据库</a>
+          <a href="#metrics" class="nav-link">监控指标</a>
+
+          <div class="nav-group">SQL 客户端</div>
+          <a href="#sql-terminal" class="nav-link">SQL 终端</a>
+          <a href="#sql-history" class="nav-link">SQL 执行历史</a>
+
+          <div class="nav-group">备份管理</div>
+          <a href="#backup-strategies" class="nav-link">备份策略</a>
+          <a href="#backup-records" class="nav-link">备份记录</a>
+          <a href="#backup-tasks" class="nav-link">定时任务</a>
+          <a href="#backup-restore" class="nav-link">恢复</a>
+
+          <div class="nav-group">认证管理</div>
+          <a href="#auth-users" class="nav-link">用户</a>
+          <a href="#auth-teams" class="nav-link">团队</a>
+          <a href="#auth-roles" class="nav-link">角色</a>
+          <a href="#auth-permissions" class="nav-link">权限</a>
+
+          <div class="nav-group">账号管理</div>
+          <a href="#account" class="nav-link">修改密码</a>
+          <button class="nav-link nav-button" id="logout-btn">注销</button>
+        </nav>
+      </aside>
+
+      <div class="content">
+        <header class="topbar">
+          <div class="topbar-left">
+            <h2 id="view-title">概览</h2>
+          </div>
+          <div class="topbar-right">
+            <span id="user-badge">未登录</span>
+            <button class="ghost" id="refresh-view">刷新</button>
+          </div>
+        </header>
+
+        <main id="view"></main>
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="login-overlay">
+      <div class="login-card">
+        <h3>登录 AuroraVault</h3>
+        <p>请使用账号密码登录管理系统</p>
+        <form id="login-form">
+          <label>
+            用户名
+            <input type="text" name="username" required />
+          </label>
+          <label>
+            密码
+            <input type="password" name="password" required />
+          </label>
+          <button type="submit" class="primary">登录</button>
+        </form>
+        <div class="login-error" id="login-error"></div>
+      </div>
+    </div>
+
+    <script src="{% static 'webui/app.js' %}"></script>
+  </body>
+</html>

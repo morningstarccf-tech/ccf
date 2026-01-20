@@ -19,7 +19,7 @@ from pathlib import Path
 import logging
 from uuid import uuid4
 
-from apps.backups.models import BackupStrategy, BackupRecord
+from apps.backups.models import BackupStrategy, BackupRecord, BackupOneOffTask
 from apps.backups.serializers import (
     BackupStrategySerializer,
     BackupStrategyCreateSerializer,
@@ -28,6 +28,8 @@ from apps.backups.serializers import (
     ManualBackupSerializer,
     RestoreSerializer,
     RestoreUploadSerializer,
+    BackupOneOffTaskSerializer,
+    BackupOneOffTaskCreateSerializer,
 )
 from apps.backups.services import (
     StrategyManager,
@@ -604,6 +606,71 @@ class BackupRecordViewSet(viewsets.ModelViewSet):
             'message': '验证任务已创建',
             'task_id': task.id
         })
+
+
+class BackupOneOffTaskViewSet(viewsets.ModelViewSet):
+    """
+    一次性定时任务 ViewSet
+    """
+
+    permission_classes = [IsAuthenticated, IsTeamMember]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['instance', 'status', 'backup_type']
+    search_fields = ['name']
+    ordering_fields = ['created_at', 'run_at']
+    ordering = ['-run_at']
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_superuser:
+            return BackupOneOffTask.objects.all().select_related('instance', 'created_by', 'backup_record')
+        user_teams = user.teams.all()
+        return BackupOneOffTask.objects.filter(
+            instance__team__in=user_teams
+        ).select_related('instance', 'created_by', 'backup_record')
+
+    def get_serializer_class(self):
+        if self.action in ['create', 'update', 'partial_update']:
+            return BackupOneOffTaskCreateSerializer
+        return BackupOneOffTaskSerializer
+
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy', 'run_now', 'cancel']:
+            return [IsAuthenticated(), IsTeamAdmin()]
+        return super().get_permissions()
+
+    def perform_create(self, serializer):
+        task = serializer.save(created_by=self.request.user)
+        # 使用 ETA 调度
+        try:
+            execute_oneoff_backup_task = __import__('apps.backups.tasks', fromlist=['execute_oneoff_backup_task']).execute_oneoff_backup_task
+            execute_oneoff_backup_task.apply_async((task.id,), eta=task.run_at)
+            task.task_id = execute_oneoff_backup_task.request.id if hasattr(execute_oneoff_backup_task, 'request') else task.task_id
+            task.save(update_fields=['task_id'])
+        except Exception as exc:
+            logger.warning(f"定时任务调度失败: {exc}")
+
+    @action(detail=True, methods=['post'], url_path='run-now')
+    def run_now(self, request, pk=None):
+        task = self.get_object()
+        try:
+            execute_oneoff_backup_task = __import__('apps.backups.tasks', fromlist=['execute_oneoff_backup_task']).execute_oneoff_backup_task
+            async_result = execute_oneoff_backup_task.delay(task.id)
+            task.task_id = async_result.id
+            task.save(update_fields=['task_id'])
+            return Response({'success': True, 'message': '任务已触发', 'task_id': async_result.id})
+        except Exception as exc:
+            logger.exception(f"立即执行失败: {exc}")
+            return Response({'success': False, 'message': f'立即执行失败: {exc}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'], url_path='cancel')
+    def cancel(self, request, pk=None):
+        task = self.get_object()
+        if task.status not in ['pending', 'running']:
+            return Response({'success': False, 'message': '任务状态不可取消'}, status=status.HTTP_400_BAD_REQUEST)
+        task.status = 'canceled'
+        task.save(update_fields=['status'])
+        return Response({'success': True, 'message': '任务已取消'})
 
 
 # 在 MySQLInstanceViewSet 中添加手动备份动作

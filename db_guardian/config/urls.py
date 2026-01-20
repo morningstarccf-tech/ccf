@@ -9,9 +9,11 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 urlpatterns = [
-    # Django Admin
-    path('admin/', admin.site.urls),
-    # 根路径重定向到 admin（使首页更友好）
+    # 新前端（取代 admin 作为主入口）
+    path('admin/', include('apps.webui.urls')),
+    # 保留原 Django Admin（仅维护用）
+    path('x-admin/', admin.site.urls),
+    # 根路径重定向到新前端
     path('', RedirectView.as_view(url='/admin/', permanent=False)),
     
     # API 路由

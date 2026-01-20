@@ -5,7 +5,7 @@
 """
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from apps.backups.views import BackupStrategyViewSet, BackupRecordViewSet
+from apps.backups.views import BackupStrategyViewSet, BackupRecordViewSet, BackupOneOffTaskViewSet
 
 app_name = 'backups'
 
@@ -15,6 +15,7 @@ router = DefaultRouter()
 # 注册视图集
 router.register('strategies', BackupStrategyViewSet, basename='strategy')
 router.register('records', BackupRecordViewSet, basename='record')
+router.register('oneoff-tasks', BackupOneOffTaskViewSet, basename='oneoff-task')
 
 # URL 配置
 urlpatterns = [
