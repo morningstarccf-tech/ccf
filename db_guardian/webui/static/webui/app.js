@@ -720,9 +720,7 @@ async function renderInstances() {
             <select id="sql-instance" class="input-control">${options}</select>
           </label>
           <label>数据库：
-            <select id="sql-db" class="input-control">
-              <option value="">全部数据库</option>
-            </select>
+            <select id="sql-db" class="input-control"></select>
           </label>
           <label>输出：
             <select id="sql-output-mode" class="input-control">
@@ -730,6 +728,7 @@ async function renderInstances() {
               <option value="json">JSON 输出</option>
             </select>
           </label>
+          <button class="ghost" id="sql-clear">清屏</button>
         </div>
         <div class="sql-terminal">
           <pre id="sql-output" class="sql-output"></pre>
@@ -744,6 +743,7 @@ async function renderInstances() {
     const instanceSelect = document.getElementById("sql-instance");
     const dbSelect = document.getElementById("sql-db");
     const sqlText = document.getElementById("sql-text");
+    const clearBtn = document.getElementById("sql-clear");
     const savedMode = localStorage.getItem("av_sql_output") || "table";
     modeSelect.value = savedMode;
     modeSelect.onchange = () => {
@@ -751,7 +751,7 @@ async function renderInstances() {
     };
 
     async function loadDatabases(instanceId) {
-      dbSelect.innerHTML = `<option value="">全部数据库</option>`;
+      dbSelect.innerHTML = `<option value="" disabled selected>请选择数据库</option>`;
       if (!instanceId) return;
       try {
         await apiFetch(`/api/instances/${instanceId}/sync-databases/?refresh_stats=0&include_system=1`, {
@@ -774,6 +774,10 @@ async function renderInstances() {
       const database = rawDb.replace(/;+\s*$/, "");
       if (!sql) {
         appendSqlOutput("ERROR: 请输入 SQL 语句");
+        return;
+      }
+      if (!database) {
+        appendSqlOutput("ERROR: 请选择数据库");
         return;
       }
       try {
@@ -801,6 +805,12 @@ async function renderInstances() {
         await runSql();
       }
     });
+
+    clearBtn.onclick = () => {
+      const output = document.getElementById("sql-output");
+      if (output) output.textContent = "";
+      state.sqlLastResult = null;
+    };
 
     if (instanceSelect.value) {
       await loadDatabases(instanceSelect.value);
