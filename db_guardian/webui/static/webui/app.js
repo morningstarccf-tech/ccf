@@ -13,6 +13,10 @@ const overlay = document.getElementById("login-overlay");
 const loginForm = document.getElementById("login-form");
 const loginError = document.getElementById("login-error");
 const userBadge = document.getElementById("user-badge");
+const modalOverlay = document.getElementById("modal-overlay");
+const modalTitle = document.getElementById("modal-title");
+const modalBody = document.getElementById("modal-body");
+const modalClose = document.getElementById("modal-close");
 
 const routes = {
   dashboard: { title: "概览", render: renderDashboard },
@@ -63,6 +67,22 @@ function showLogin(show) {
   overlay.classList.toggle("hidden", !show);
   document.getElementById("app").style.display = show ? "none" : "flex";
 }
+
+function openModal(title, html) {
+  modalTitle.textContent = title;
+  modalBody.innerHTML = html;
+  modalOverlay.classList.remove("hidden");
+}
+
+function closeModal() {
+  modalOverlay.classList.add("hidden");
+  modalBody.innerHTML = "";
+}
+
+modalClose?.addEventListener("click", closeModal);
+modalOverlay?.addEventListener("click", (e) => {
+  if (e.target === modalOverlay) closeModal();
+});
 
   function escapeHtml(value) {
     if (value === null || value === undefined) return "";
@@ -120,6 +140,13 @@ async function apiFetch(path, options = {}) {
     const data = await apiFetch("/api/instances/");
     state.instances = normalizeList(data);
     return state.instances;
+  }
+
+  async function ensureTeams() {
+    if (state.teams.length) return state.teams;
+    const data = await apiFetch("/api/auth/teams/");
+    state.teams = normalizeList(data);
+    return state.teams;
   }
 
 async function refreshToken() {
@@ -217,6 +244,112 @@ function renderJsonEditor(title, json, onSubmit) {
   };
 }
 
+async function openInstanceForm(instance = null) {
+  const teams = await ensureTeams();
+  if (!teams.length) {
+    alert("请先创建团队");
+    return;
+  }
+  const data = {
+    alias: instance?.alias || "",
+    host: instance?.host || "",
+    port: instance?.port || 3306,
+    username: instance?.username || "root",
+    password: "",
+    team: instance?.team || "",
+    deployment_type: instance?.deployment_type || "docker",
+    docker_container_name: instance?.docker_container_name || "",
+    mysql_service_name: instance?.mysql_service_name || "",
+    data_dir: instance?.data_dir || "",
+    remote_backup_root: instance?.remote_backup_root || "",
+    ssh_host: instance?.ssh_host || "",
+    ssh_port: instance?.ssh_port || 22,
+    ssh_user: instance?.ssh_user || "",
+    ssh_password: "",
+    ssh_key_path: instance?.ssh_key_path || "",
+  };
+
+  const teamOptions = teams
+    .map(
+      (t) =>
+        `<option value="${t.id}" ${
+          String(t.id) === String(data.team) ? "selected" : ""
+        }>${escapeHtml(t.name)}</option>`
+    )
+    .join("");
+
+  openModal(
+    instance ? "编辑实例" : "新增实例",
+    `<form id="instance-form">
+      <div class="modal-grid">
+        <label>别名<input name="alias" value="${escapeHtml(data.alias)}" required></label>
+        <label>主机<input name="host" value="${escapeHtml(data.host)}" required></label>
+        <label>端口<input name="port" type="number" value="${data.port}" required></label>
+        <label>用户名<input name="username" value="${escapeHtml(data.username)}" required></label>
+        <label>密码<input name="password" type="password" placeholder="${instance ? "留空不修改" : ""}"></label>
+        <label>团队
+          <select name="team" required>
+            <option value="">请选择</option>
+            ${teamOptions}
+          </select>
+        </label>
+        <label>部署方式
+          <select name="deployment_type">
+            <option value="docker" ${data.deployment_type === "docker" ? "selected" : ""}>Docker</option>
+            <option value="systemd" ${data.deployment_type === "systemd" ? "selected" : ""}>系统服务</option>
+          </select>
+        </label>
+        <label>容器名称<input name="docker_container_name" value="${escapeHtml(data.docker_container_name)}"></label>
+        <label>服务名称<input name="mysql_service_name" value="${escapeHtml(data.mysql_service_name)}"></label>
+        <label>数据目录<input name="data_dir" value="${escapeHtml(data.data_dir)}"></label>
+        <label>远程备份根目录<input name="remote_backup_root" value="${escapeHtml(data.remote_backup_root)}"></label>
+        <label>SSH 主机<input name="ssh_host" value="${escapeHtml(data.ssh_host)}"></label>
+        <label>SSH 端口<input name="ssh_port" type="number" value="${data.ssh_port}"></label>
+        <label>SSH 用户<input name="ssh_user" value="${escapeHtml(data.ssh_user)}"></label>
+        <label>SSH 密码<input name="ssh_password" type="password"></label>
+        <label>SSH 密钥路径<input name="ssh_key_path" value="${escapeHtml(data.ssh_key_path)}"></label>
+      </div>
+      <div class="toolbar" style="margin-top:16px;">
+        <button class="primary" type="submit">保存</button>
+      </div>
+    </form>`
+  );
+
+  document.getElementById("instance-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const payload = Object.fromEntries(formData.entries());
+    payload.port = Number(payload.port || 3306);
+    payload.ssh_port = Number(payload.ssh_port || 22);
+    payload.team = payload.team ? Number(payload.team) : null;
+
+    if (!payload.team) {
+      alert("请选择团队");
+      return;
+    }
+    if (payload.deployment_type === "docker" && !payload.docker_container_name) {
+      alert("Docker 部署方式必须填写容器名称");
+      return;
+    }
+    if (payload.deployment_type === "systemd" && !payload.mysql_service_name) {
+      alert("系统服务部署必须填写服务名称");
+      return;
+    }
+    if (payload.ssh_host && !payload.ssh_user) {
+      alert("配置 SSH 主机时必须填写 SSH 用户");
+      return;
+    }
+    if (!payload.password) delete payload.password;
+    if (!payload.ssh_password) delete payload.ssh_password;
+
+    const url = instance ? `/api/instances/${instance.id}/` : "/api/instances/";
+    const method = instance ? "PATCH" : "POST";
+    await apiFetch(url, { method, body: JSON.stringify(payload) });
+    closeModal();
+    await renderInstances();
+  };
+}
+
 async function renderDashboard() {
   const [instances, strategies, records] = await Promise.all([
     apiFetch("/api/instances/"),
@@ -270,18 +403,7 @@ async function renderInstances() {
   );
 
   document.getElementById("add-instance").onclick = () => {
-    renderJsonEditor("新增实例", {
-      alias: "",
-      host: "",
-      port: 3306,
-      username: "root",
-      password: "",
-      team: null,
-      deployment_type: "docker",
-    }, async (value) => {
-      await apiFetch("/api/instances/", { method: "POST", body: JSON.stringify(value) });
-      await renderInstances();
-    });
+    openInstanceForm();
   };
 
   document.getElementById("sync-status").onclick = renderInstances;
@@ -296,10 +418,7 @@ async function renderInstances() {
       }
       if (action === "edit") {
         const target = instances.find((i) => String(i.id) === id);
-        renderJsonEditor("编辑实例", target, async (value) => {
-          await apiFetch(`/api/instances/${id}/`, { method: "PATCH", body: JSON.stringify(value) });
-          await renderInstances();
-        });
+        openInstanceForm(target);
       }
       if (action === "delete") {
         if (!confirm("确认删除该实例？")) return;
