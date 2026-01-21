@@ -307,6 +307,45 @@ th {
   background: var(--panel-2);
 }
 
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+
+.status-badge .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6b7280;
+  box-shadow: 0 0 0 2px rgba(107, 114, 128, 0.2);
+}
+
+.status-online .dot {
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+}
+
+.status-offline .dot {
+  background: #ef4444;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.25);
+}
+
+.status-error .dot {
+  background: #f97316;
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.25);
+}
+
+.status-unknown .dot {
+  background: #94a3b8;
+  box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.25);
+}
+
 .overlay {
   position: fixed;
   inset: 0;

@@ -221,6 +221,18 @@ function setView(title, html) {
   view.innerHTML = html;
 }
 
+function formatStatusBadge(status) {
+  const normalized = (status || "").toLowerCase();
+  const map = {
+    online: { label: "在线", cls: "status-online" },
+    offline: { label: "离线", cls: "status-offline" },
+    error: { label: "错误", cls: "status-error" },
+  };
+  const fallback = { label: "未知", cls: "status-unknown" };
+  const info = map[normalized] || fallback;
+  return `<span class="status-badge ${info.cls}"><span class="dot"></span>${info.label}</span>`;
+}
+
 function renderJsonEditor(title, json, onSubmit) {
   view.insertAdjacentHTML(
     "beforeend",
@@ -378,7 +390,7 @@ async function renderInstances() {
         <td>${escapeHtml(item.alias)}</td>
         <td>${escapeHtml(item.host)}</td>
         <td>${escapeHtml(item.port)}</td>
-        <td>${escapeHtml(item.status)}</td>
+        <td>${formatStatusBadge(item.status)}</td>
         <td>
           <button class="ghost" data-action="refresh" data-id="${item.id}">刷新状态</button>
           <button class="ghost" data-action="edit" data-id="${item.id}">编辑</button>
@@ -437,7 +449,7 @@ async function renderInstances() {
         <details class="db-instance" data-id="${instance.id}">
           <summary>
             <span>${escapeHtml(instance.alias)} (${escapeHtml(instance.host)}:${escapeHtml(instance.port)})</span>
-            <span class="tag">${escapeHtml(instance.status || "")}</span>
+            ${formatStatusBadge(instance.status)}
           </summary>
           <div class="db-body">
             <div class="toolbar">
@@ -467,15 +479,17 @@ async function renderInstances() {
       const table = details.querySelector(".db-table");
       table.innerHTML = `<span class="muted">加载中...</span>`;
       try {
-        const syncResult = await apiFetch(
+        await apiFetch(
           `/api/instances/${id}/sync-databases/?refresh_stats=1&include_system=1`,
           { method: "POST" }
         );
-        const rows = normalizeList(syncResult.databases || syncResult)
-          .map(
-            (db) =>
-              `<tr><td>${escapeHtml(db.name)}</td><td>${db.table_count}</td><td>${db.size_mb}</td></tr>`
-          )
+        const list = await apiFetch(`/api/instances/${id}/databases/?refresh=0`);
+        const rows = normalizeList(list)
+          .map((db) => {
+            const tableCount = db.table_count ?? 0;
+            const sizeMb = db.size_mb ?? 0;
+            return `<tr><td>${escapeHtml(db.name)}</td><td>${tableCount}</td><td>${sizeMb}</td></tr>`;
+          })
           .join("");
         table.innerHTML = `
           <table>
