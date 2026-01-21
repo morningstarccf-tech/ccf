@@ -382,7 +382,7 @@ async function renderInstances() {
         <td>
           <button class="ghost" data-action="refresh" data-id="${item.id}">刷新状态</button>
           <button class="ghost" data-action="edit" data-id="${item.id}">编辑</button>
-          <button class="danger" data-action="delete" data-id="${item.id}">删除</button>
+          <button class="ghost" data-action="delete" data-id="${item.id}">删除</button>
         </td>
       </tr>`
     )
@@ -462,13 +462,16 @@ async function renderInstances() {
       </div>`
     );
 
-    async function loadInstance(details, force = true) {
+    async function loadInstance(details) {
       const id = details.dataset.id;
       const table = details.querySelector(".db-table");
       table.innerHTML = `<span class="muted">加载中...</span>`;
       try {
-        const list = await apiFetch(`/api/instances/${id}/databases/?refresh=${force ? 1 : 0}`);
-        const rows = normalizeList(list)
+        const syncResult = await apiFetch(
+          `/api/instances/${id}/sync-databases/?refresh_stats=1&include_system=1`,
+          { method: "POST" }
+        );
+        const rows = normalizeList(syncResult.databases || syncResult)
           .map(
             (db) =>
               `<tr><td>${escapeHtml(db.name)}</td><td>${db.table_count}</td><td>${db.size_mb}</td></tr>`
@@ -490,11 +493,11 @@ async function renderInstances() {
       refreshBtn.onclick = (event) => {
         event.preventDefault();
         event.stopPropagation();
-        loadInstance(details, true);
+        loadInstance(details);
       };
       details.addEventListener("toggle", () => {
         if (details.open && !details.dataset.loaded) {
-          loadInstance(details, true);
+          loadInstance(details);
         }
       });
     });
@@ -504,7 +507,7 @@ async function renderInstances() {
       refreshAll.onclick = async () => {
         const all = Array.from(document.querySelectorAll(".db-instance"));
         for (const details of all) {
-          await loadInstance(details, true);
+          await loadInstance(details);
         }
       };
     }
