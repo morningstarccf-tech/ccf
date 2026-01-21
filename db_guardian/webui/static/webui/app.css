@@ -309,6 +309,54 @@ main#view {
   color: var(--muted);
 }
 
+.sql-terminal {
+  margin-top: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sql-output {
+  margin: 0;
+  min-height: 160px;
+  max-height: 420px;
+  overflow: auto;
+  font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.sql-input-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+}
+
+.sql-prompt {
+  font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+  color: var(--muted);
+  line-height: 1.4;
+  padding-top: 2px;
+}
+
+.sql-input {
+  flex: 1;
+  min-height: 28px;
+  resize: vertical;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+  font-size: 13px;
+}
+
 .card h3 {
   margin: 0 0 12px;
 }

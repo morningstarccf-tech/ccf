@@ -729,8 +729,13 @@ async function renderInstances() {
             </select>
           </label>
         </div>
-        <textarea id="sql-text" style="width:100%;min-height:140px;" placeholder="输入 SQL（回车执行，Shift+Enter 换行）"></textarea>
-        <pre id="sql-output" style="margin-top:12px;"></pre>
+        <div class="sql-terminal">
+          <pre id="sql-output" class="sql-output"></pre>
+          <div class="sql-input-row">
+            <span class="sql-prompt">&gt;</span>
+            <textarea id="sql-text" class="sql-input" rows="1" placeholder="输入 SQL（回车执行，Shift+Enter 换行）"></textarea>
+          </div>
+        </div>
       </div>`
     );
     const modeSelect = document.getElementById("sql-output-mode");
