@@ -685,16 +685,10 @@ async function renderInstances() {
     return [line, header, line, body || "", line].filter(Boolean).join("\n");
   }
 
-  function renderSqlOutput(result, mode) {
-    const output = document.getElementById("sql-output");
-    if (!output) return;
-    if (!result) {
-      output.textContent = "";
-      return;
-    }
+  function formatSqlOutput(result, mode) {
+    if (!result) return "";
     if (mode === "json") {
-      output.textContent = JSON.stringify(result, null, 2);
-      return;
+      return JSON.stringify(result, null, 2);
     }
     const rows = Array.isArray(result.data) ? result.data.length : 0;
     const affected = result.rows_affected ?? rows;
@@ -702,7 +696,15 @@ async function renderInstances() {
     const type = result.sql_type || "SQL";
     const meta = `OK (${type}) rows=${affected} time=${elapsed}ms`;
     const table = buildAsciiTable(result.columns || [], result.data || []);
-    output.textContent = `${meta}\n${table}`;
+    return `${meta}\n${table}`;
+  }
+
+  function appendSqlOutput(text) {
+    const output = document.getElementById("sql-output");
+    if (!output) return;
+    const prefix = output.textContent ? "\n" : "";
+    output.textContent += `${prefix}${text}`;
+    output.scrollTop = output.scrollHeight;
   }
 
   async function renderSqlTerminal() {
@@ -746,7 +748,6 @@ async function renderInstances() {
     modeSelect.value = savedMode;
     modeSelect.onchange = () => {
       localStorage.setItem("av_sql_output", modeSelect.value);
-      renderSqlOutput(state.sqlLastResult, modeSelect.value);
     };
 
     async function loadDatabases(instanceId) {
@@ -772,19 +773,21 @@ async function renderInstances() {
       const rawDb = dbSelect.value.trim();
       const database = rawDb.replace(/;+\s*$/, "");
       if (!sql) {
-        document.getElementById("sql-output").textContent = "ERROR: 请输入 SQL 语句";
+        appendSqlOutput("ERROR: 请输入 SQL 语句");
         return;
       }
       try {
+        appendSqlOutput(`> ${sql}`);
         const result = await apiFetch(`/api/instances/${instanceId}/query/`, {
           method: "POST",
           body: JSON.stringify({ sql, database }),
         });
         state.sqlLastResult = result;
-        renderSqlOutput(result, modeSelect.value);
+        appendSqlOutput(formatSqlOutput(result, modeSelect.value));
+        sqlText.value = "";
       } catch (err) {
         state.sqlLastResult = null;
-        document.getElementById("sql-output").textContent = `ERROR: ${err.message || "执行失败"}`;
+        appendSqlOutput(`ERROR: ${err.message || "执行失败"}`);
       }
     }
 
