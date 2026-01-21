@@ -276,6 +276,40 @@ main#view {
   gap: 10px;
 }
 
+.task-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.task-column {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.task-column h4 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.file-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.file-button {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
 .pie {
   width: 72px;
   height: 72px;

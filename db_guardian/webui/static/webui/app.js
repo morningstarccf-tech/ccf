@@ -843,23 +843,62 @@ async function renderSqlHistory() {
 
 async function renderBackupTaskBoard() {
   const data = await apiFetch("/api/backups/records/?ordering=-created_at");
-  const rows = normalizeList(data)
-    .map(
-      (r) => `<tr>
-        <td>${escapeHtml(r.instance_alias)}</td>
-        <td>${escapeHtml(r.backup_type_display)}</td>
-        <td>${formatExecStatus(r.status)}</td>
-        <td>${escapeHtml(r.created_at)}</td>
-      </tr>`
-    )
-    .join("");
+  const records = normalizeList(data);
+  const groups = {
+    pending: [],
+    running: [],
+    done: [],
+  };
+  records.forEach((r) => {
+    const status = (r.status || "").toLowerCase();
+    if (["pending", "queued", "waiting"].includes(status)) {
+      groups.pending.push(r);
+    } else if (["running", "in_progress", "processing"].includes(status)) {
+      groups.running.push(r);
+    } else {
+      groups.done.push(r);
+    }
+  });
+
+  const renderRows = (list) =>
+    (list.length
+      ? list
+          .map(
+            (r) => `<tr>
+              <td>${escapeHtml(r.instance_alias)}</td>
+              <td>${escapeHtml(r.backup_type_display)}</td>
+              <td>${formatExecStatus(r.status)}</td>
+              <td>${escapeHtml(r.created_at)}</td>
+            </tr>`
+          )
+          .join("")
+      : `<tr><td colspan="4"><span class="muted">暂无任务</span></td></tr>`);
   setView(
     "任务列表",
     `<div class="card">
-      <table>
-        <thead><tr><th>实例</th><th>类型</th><th>状态</th><th>时间</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <div class="task-board">
+        <div class="task-column">
+          <h4>待执行（${groups.pending.length}）</h4>
+          <table>
+            <thead><tr><th>实例</th><th>类型</th><th>状态</th><th>时间</th></tr></thead>
+            <tbody>${renderRows(groups.pending)}</tbody>
+          </table>
+        </div>
+        <div class="task-column">
+          <h4>执行中（${groups.running.length}）</h4>
+          <table>
+            <thead><tr><th>实例</th><th>类型</th><th>状态</th><th>时间</th></tr></thead>
+            <tbody>${renderRows(groups.running)}</tbody>
+          </table>
+        </div>
+        <div class="task-column">
+          <h4>已完成（${groups.done.length}）</h4>
+          <table>
+            <thead><tr><th>实例</th><th>类型</th><th>状态</th><th>时间</th></tr></thead>
+            <tbody>${renderRows(groups.done)}</tbody>
+          </table>
+        </div>
+      </div>
     </div>`
   );
 }
@@ -1103,16 +1142,7 @@ async function renderBackupTasks() {
     </div>`
   );
   document.getElementById("add-task").onclick = () => {
-    renderJsonEditor("新增定时任务", {
-      name: "",
-      instance_id: null,
-      run_at: new Date().toISOString(),
-      backup_type: "full",
-      storage_mode: "default",
-    }, async (value) => {
-      await apiFetch("/api/backups/oneoff-tasks/", { method: "POST", body: JSON.stringify(value) });
-      await renderBackupTasks();
-    });
+    openBackupTaskForm();
   };
   view.querySelectorAll("button[data-action]").forEach((btn) => {
     btn.onclick = async () => {
@@ -1128,6 +1158,104 @@ async function renderBackupTasks() {
       await renderBackupTasks();
     };
   });
+}
+
+function formatLocalDateTime(value) {
+  const date = value ? new Date(value) : new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const y = date.getFullYear();
+  const m = pad(date.getMonth() + 1);
+  const d = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mm = pad(date.getMinutes());
+  return `${y}-${m}-${d}T${hh}:${mm}`;
+}
+
+async function openBackupTaskForm(task = null) {
+  await ensureInstances();
+  const data = {
+    name: task?.name || "",
+    instance_id: task?.instance?.id || "",
+    run_at: formatLocalDateTime(task?.run_at),
+    backup_type: task?.backup_type || "full",
+    storage_mode: task?.storage_mode || "default",
+    storage_path: task?.storage_path || "",
+    compress: task?.compress ?? true,
+    databases: Array.isArray(task?.databases) ? task.databases.join(",") : "",
+  };
+
+  const instanceOptions = state.instances
+    .map(
+      (i) =>
+        `<option value="${i.id}" ${
+          String(i.id) === String(data.instance_id) ? "selected" : ""
+        }>${escapeHtml(i.alias)}</option>`
+    )
+    .join("");
+
+  openModal(
+    "新增定时任务",
+    `<form id="oneoff-form">
+      <div class="modal-grid">
+        <label>任务名称<input name="name" value="${escapeHtml(data.name)}" required></label>
+        <label>实例
+          <select name="instance_id" required>
+            <option value="">请选择</option>
+            ${instanceOptions}
+          </select>
+        </label>
+        <label>执行时间<input name="run_at" type="datetime-local" value="${escapeHtml(data.run_at)}" required></label>
+        <label>备份类型
+          <select name="backup_type">
+            <option value="full" ${data.backup_type === "full" ? "selected" : ""}>全量备份</option>
+            <option value="incremental" ${data.backup_type === "incremental" ? "selected" : ""}>增量备份</option>
+            <option value="hot" ${data.backup_type === "hot" ? "selected" : ""}>热备份</option>
+            <option value="cold" ${data.backup_type === "cold" ? "selected" : ""}>冷备份</option>
+          </select>
+        </label>
+        <label>存储位置
+          <select name="storage_mode">
+            <option value="default" ${data.storage_mode === "default" ? "selected" : ""}>默认容器路径</option>
+            <option value="mysql_host" ${data.storage_mode === "mysql_host" ? "selected" : ""}>MySQL 服务器路径</option>
+            <option value="remote_server" ${data.storage_mode === "remote_server" ? "selected" : ""}>远程服务器路径</option>
+            <option value="oss" ${data.storage_mode === "oss" ? "selected" : ""}>云存储（OSS）</option>
+          </select>
+        </label>
+        <label>存储路径<input name="storage_path" value="${escapeHtml(data.storage_path)}"></label>
+        <label>数据库列表（逗号分隔）<input name="databases" value="${escapeHtml(data.databases)}"></label>
+        <label>是否压缩
+          <select name="compress">
+            <option value="true" ${data.compress ? "selected" : ""}>是</option>
+            <option value="false" ${!data.compress ? "selected" : ""}>否</option>
+          </select>
+        </label>
+      </div>
+      <div class="toolbar" style="margin-top:16px;">
+        <button class="primary" type="submit">保存</button>
+      </div>
+    </form>`
+  );
+
+  document.getElementById("oneoff-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const payload = Object.fromEntries(formData.entries());
+    payload.instance_id = payload.instance_id ? Number(payload.instance_id) : null;
+    payload.run_at = payload.run_at ? new Date(payload.run_at).toISOString() : null;
+    payload.compress = payload.compress === "true";
+    payload.databases = payload.databases
+      ? payload.databases.split(",").map((d) => d.trim()).filter(Boolean)
+      : null;
+
+    if (!payload.instance_id) {
+      alert("请选择实例");
+      return;
+    }
+
+    await apiFetch("/api/backups/oneoff-tasks/", { method: "POST", body: JSON.stringify(payload) });
+    closeModal();
+    await renderBackupTasks();
+  };
 }
 
   async function renderBackupRestore() {
@@ -1149,20 +1277,30 @@ async function renderBackupTasks() {
   setView(
     "恢复",
     `<div class="card">
+      <h3>上传备份文件恢复</h3>
+      <form id="restore-upload">
+        <label>实例
+          <select name="instance_id" id="restore-instance" class="input-control" required></select>
+        </label>
+        <label>目标数据库
+          <select name="target_database" id="restore-db" class="input-control">
+            <option value="">保持原库</option>
+          </select>
+        </label>
+        <div class="file-input">
+          <input name="backup_file" id="restore-file" type="file" required hidden />
+          <label for="restore-file" class="ghost file-button">选择文件</label>
+          <span id="restore-file-name" class="muted">未选择文件</span>
+        </div>
+        <button class="primary" type="submit">上传恢复</button>
+      </form>
+    </div>
+    <div class="card">
       <h3>从备份记录恢复</h3>
       <table>
         <thead><tr><th>实例</th><th>类型</th><th>时间</th><th>操作</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
-    </div>
-    <div class="card">
-      <h3>上传备份文件恢复</h3>
-      <form id="restore-upload">
-        <label>实例ID <input name="instance_id" required></label>
-        <label>目标数据库 <input name="target_database"></label>
-        <label>备份文件 <input name="backup_file" type="file" required></label>
-        <button class="primary" type="submit">上传恢复</button>
-      </form>
     </div>`
   );
 
@@ -1187,6 +1325,41 @@ async function renderBackupTasks() {
       }
     };
   });
+
+  const restoreInstance = document.getElementById("restore-instance");
+  const restoreDb = document.getElementById("restore-db");
+  const restoreFile = document.getElementById("restore-file");
+  const restoreFileName = document.getElementById("restore-file-name");
+
+  restoreInstance.innerHTML = `<option value="">请选择实例</option>` +
+    state.instances.map((i) => `<option value="${i.id}">${escapeHtml(i.alias)}</option>`).join("");
+
+  async function loadRestoreDatabases(instanceId) {
+    restoreDb.innerHTML = `<option value="">保持原库</option>`;
+    if (!instanceId) return;
+    try {
+      await apiFetch(`/api/instances/${instanceId}/sync-databases/?refresh_stats=0&include_system=1`, { method: "POST" });
+      const list = await apiFetch(`/api/instances/${instanceId}/databases/?refresh=0`);
+      const rows = normalizeList(list)
+        .map((db) => `<option value="${escapeHtml(db.name)}">${escapeHtml(db.name)}</option>`)
+        .join("");
+      restoreDb.insertAdjacentHTML("beforeend", rows);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  restoreInstance.onchange = async () => {
+    await loadRestoreDatabases(restoreInstance.value);
+  };
+
+  restoreFile.onchange = () => {
+    restoreFileName.textContent = restoreFile.files?.[0]?.name || "未选择文件";
+  };
+
+  if (restoreInstance.value) {
+    await loadRestoreDatabases(restoreInstance.value);
+  }
 
   document.getElementById("restore-upload").onsubmit = async (e) => {
     e.preventDefault();
