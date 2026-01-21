@@ -730,6 +730,7 @@ async function renderInstances() {
               <option value="json">JSON 输出</option>
             </select>
           </label>
+          <button class="ghost" id="sql-clear">清屏</button>
         </div>
         <div class="sql-terminal">
           <pre id="sql-output" class="sql-output"></pre>
@@ -744,10 +745,16 @@ async function renderInstances() {
     const instanceSelect = document.getElementById("sql-instance");
     const dbSelect = document.getElementById("sql-db");
     const sqlText = document.getElementById("sql-text");
+    const clearBtn = document.getElementById("sql-clear");
     const savedMode = localStorage.getItem("av_sql_output") || "table";
     modeSelect.value = savedMode;
     modeSelect.onchange = () => {
       localStorage.setItem("av_sql_output", modeSelect.value);
+    };
+    clearBtn.onclick = () => {
+      const output = document.getElementById("sql-output");
+      if (output) output.textContent = "";
+      state.sqlLastResult = null;
     };
 
     async function loadDatabases(instanceId) {
