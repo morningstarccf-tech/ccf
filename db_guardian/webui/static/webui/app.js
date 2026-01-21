@@ -529,55 +529,120 @@ async function renderInstances() {
 
   async function renderMetrics() {
     await ensureInstances();
-  const options = state.instances
-    .map((i) => `<option value="${i.id}">${escapeHtml(i.alias)}</option>`)
-    .join("");
-  setView(
-    "监控指标",
-    `<div class="card">
-      <div class="toolbar">
-        <label>实例：
-          <select id="metrics-instance">${options}</select>
-        </label>
-        <button class="ghost" id="metrics-refresh">刷新</button>
-      </div>
-      <div id="metrics-list"></div>
-    </div>`
-  );
-  const select = document.getElementById("metrics-instance");
-  const load = async () => {
-    const data = await apiFetch(`/api/instances/${select.value}/metrics/?hours=24`);
-    const list = normalizeList(data);
-    const latest = list[0];
-    if (!latest) {
-      document.getElementById("metrics-list").innerHTML = `<p>暂无监控数据</p>`;
+    setView(
+      "监控指标",
+      `<div class="card">
+        <div class="toolbar">
+          <button class="ghost" id="metrics-refresh-all">刷新全部</button>
+        </div>
+        <div id="metrics-board" class="metrics-board"></div>
+      </div>`
+    );
+
+    const board = document.getElementById("metrics-board");
+    if (!state.instances.length) {
+      board.innerHTML = `<p class="muted">暂无实例</p>`;
       return;
     }
 
-    const cpu = Number(latest.cpu_usage || 0);
-    const mem = Number(latest.memory_usage || 0);
-    const disk = Number(latest.disk_usage || 0);
+    board.innerHTML = state.instances
+      .map(
+        (instance) => `
+        <div class="metrics-panel" data-id="${instance.id}">
+          <div class="metrics-panel-head">
+            <div class="metrics-panel-title">
+              ${escapeHtml(instance.alias)} ${formatStatusBadge(instance.status)}
+            </div>
+            <button class="ghost" data-action="refresh">刷新</button>
+          </div>
+          <div class="metrics-panel-body">
+            <div class="metrics-grid" id="metrics-grid-${instance.id}">
+              <div class="metric-card">
+                <div class="pie" style="--value:0;"></div>
+                <div class="metric-info">
+                  <span>CPU</span>
+                  <strong>--</strong>
+                </div>
+              </div>
+              <div class="metric-card">
+                <div class="pie" style="--value:0;"></div>
+                <div class="metric-info">
+                  <span>内存</span>
+                  <strong>--</strong>
+                </div>
+              </div>
+              <div class="metric-card">
+                <div class="pie" style="--value:0;"></div>
+                <div class="metric-info">
+                  <span>磁盘</span>
+                  <strong>--</strong>
+                </div>
+              </div>
+            </div>
+            <div class="metric-meta" id="metrics-meta-${instance.id}">加载中...</div>
+          </div>
+        </div>`
+      )
+      .join("");
 
-    const chart = (value, label) => `
-      <div class="metric-card">
-        <div class="pie" style="--value:${Math.min(100, Math.max(0, value))};"></div>
-        <div class="metric-info">
-          <span>${label}</span>
-          <strong>${value.toFixed(1)}%</strong>
-        </div>
-      </div>`;
+    const loadInstanceMetrics = async (instance, collect = true) => {
+      const grid = document.getElementById(`metrics-grid-${instance.id}`);
+      const meta = document.getElementById(`metrics-meta-${instance.id}`);
+      if (!grid || !meta) return;
+      meta.textContent = "采集中...";
+      if (collect) {
+        await apiFetch(`/api/instances/${instance.id}/collect-metrics/`, {
+          method: "POST",
+        }).catch(() => {});
+      }
+      const data = await apiFetch(`/api/instances/${instance.id}/metrics/?hours=24`);
+      const list = normalizeList(data);
+      const latest = list[0];
+      if (!latest) {
+        meta.textContent = "暂无监控数据";
+        return;
+      }
+      const cpu = Number(latest.cpu_usage ?? 0);
+      const mem = Number(latest.memory_usage ?? 0);
+      const disk = Number(latest.disk_usage ?? 0);
 
-    document.getElementById("metrics-list").innerHTML = `
-      <div class="metrics-grid">
+      const chart = (value, label) => `
+        <div class="metric-card">
+          <div class="pie" style="--value:${Math.min(100, Math.max(0, value))};"></div>
+          <div class="metric-info">
+            <span>${label}</span>
+            <strong>${value.toFixed(1)}%</strong>
+          </div>
+        </div>`;
+
+      grid.innerHTML = `
         ${chart(cpu, "CPU")}
         ${chart(mem, "内存")}
         ${chart(disk, "磁盘")}
-      </div>
-      <div class="metric-meta">更新时间：${escapeHtml(latest.timestamp)}</div>
-    `;
-  };
-  document.getElementById("metrics-refresh").onclick = load;
-    await load();
+      `;
+      meta.textContent = `更新时间：${latest.timestamp || "-"}`;
+    };
+
+    board.querySelectorAll("[data-action='refresh']").forEach((btn) => {
+      btn.onclick = async () => {
+        const panel = btn.closest(".metrics-panel");
+        const id = panel?.dataset.id;
+        const instance = state.instances.find((i) => String(i.id) === id);
+        if (instance) {
+          await loadInstanceMetrics(instance, true);
+        }
+      };
+    });
+
+    document.getElementById("metrics-refresh-all").onclick = async () => {
+      for (const instance of state.instances) {
+        await loadInstanceMetrics(instance, true);
+      }
+    };
+
+    for (const instance of state.instances) {
+      await loadInstanceMetrics(instance, false);
+    }
   }
 
   function buildAsciiTable(columns, rows) {
