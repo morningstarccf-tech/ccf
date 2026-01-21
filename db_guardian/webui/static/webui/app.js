@@ -233,6 +233,20 @@ function formatStatusBadge(status) {
   return `<span class="status-badge ${info.cls}"><span class="dot"></span>${info.label}</span>`;
 }
 
+function formatExecStatus(status) {
+  const normalized = (status || "").toLowerCase();
+  const map = {
+    success: { label: "成功", cls: "status-success" },
+    failed: { label: "失败", cls: "status-failed" },
+    error: { label: "失败", cls: "status-failed" },
+    running: { label: "执行中", cls: "status-running" },
+    pending: { label: "待执行", cls: "status-pending" },
+  };
+  const fallback = { label: "未知", cls: "status-unknown" };
+  const info = map[normalized] || fallback;
+  return `<span class="status-badge ${info.cls}"><span class="dot"></span>${info.label}</span>`;
+}
+
 function renderJsonEditor(title, json, onSubmit) {
   view.insertAdjacentHTML(
     "beforeend",
@@ -701,34 +715,56 @@ async function renderInstances() {
       `<div class="card">
         <div class="toolbar">
           <label>实例：
-            <select id="sql-instance">${options}</select>
+            <select id="sql-instance" class="input-control">${options}</select>
           </label>
           <label>数据库：
-            <input id="sql-db" placeholder="可选" />
+            <select id="sql-db" class="input-control">
+              <option value="">全部数据库</option>
+            </select>
           </label>
           <label>输出：
-            <select id="sql-output-mode">
+            <select id="sql-output-mode" class="input-control">
               <option value="table">表格输出</option>
               <option value="json">JSON 输出</option>
             </select>
           </label>
-          <button class="primary" id="sql-run">执行</button>
         </div>
-        <textarea id="sql-text" style="width:100%;min-height:140px;" placeholder="输入 SQL"></textarea>
+        <textarea id="sql-text" style="width:100%;min-height:140px;" placeholder="输入 SQL（回车执行，Shift+Enter 换行）"></textarea>
         <pre id="sql-output" style="margin-top:12px;"></pre>
       </div>`
     );
     const modeSelect = document.getElementById("sql-output-mode");
+    const instanceSelect = document.getElementById("sql-instance");
+    const dbSelect = document.getElementById("sql-db");
+    const sqlText = document.getElementById("sql-text");
     const savedMode = localStorage.getItem("av_sql_output") || "table";
     modeSelect.value = savedMode;
     modeSelect.onchange = () => {
       localStorage.setItem("av_sql_output", modeSelect.value);
       renderSqlOutput(state.sqlLastResult, modeSelect.value);
     };
-    document.getElementById("sql-run").onclick = async () => {
-      const instanceId = document.getElementById("sql-instance").value;
-      const sql = document.getElementById("sql-text").value.trim();
-      const rawDb = document.getElementById("sql-db").value.trim();
+
+    async function loadDatabases(instanceId) {
+      dbSelect.innerHTML = `<option value="">全部数据库</option>`;
+      if (!instanceId) return;
+      try {
+        await apiFetch(`/api/instances/${instanceId}/sync-databases/?refresh_stats=0&include_system=1`, {
+          method: "POST",
+        });
+        const list = await apiFetch(`/api/instances/${instanceId}/databases/?refresh=0`);
+        const rows = normalizeList(list)
+          .map((db) => `<option value="${escapeHtml(db.name)}">${escapeHtml(db.name)}</option>`)
+          .join("");
+        dbSelect.insertAdjacentHTML("beforeend", rows);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    async function runSql() {
+      const instanceId = instanceSelect.value;
+      const sql = sqlText.value.trim();
+      const rawDb = dbSelect.value.trim();
       const database = rawDb.replace(/;+\s*$/, "");
       if (!sql) {
         document.getElementById("sql-output").textContent = "ERROR: 请输入 SQL 语句";
@@ -745,7 +781,22 @@ async function renderInstances() {
         state.sqlLastResult = null;
         document.getElementById("sql-output").textContent = `ERROR: ${err.message || "执行失败"}`;
       }
+    }
+
+    instanceSelect.onchange = async () => {
+      await loadDatabases(instanceSelect.value);
     };
+
+    sqlText.addEventListener("keydown", async (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        await runSql();
+      }
+    });
+
+    if (instanceSelect.value) {
+      await loadDatabases(instanceSelect.value);
+    }
   }
 
 async function renderSqlHistory() {
@@ -756,7 +807,7 @@ async function renderSqlHistory() {
       <td>${escapeHtml(item.sql_type)}</td>
       <td>${escapeHtml(item.database_name)}</td>
       <td>${escapeHtml(item.executed_at)}</td>
-      <td>${escapeHtml(item.status)}</td>
+      <td>${formatExecStatus(item.status)}</td>
     </tr>`
     )
     .join("");
