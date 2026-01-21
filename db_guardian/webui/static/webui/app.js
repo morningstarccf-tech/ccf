@@ -248,6 +248,20 @@ function formatExecStatus(status) {
   return `<span class="status-badge ${info.cls}"><span class="dot"></span>${info.label}</span>`;
 }
 
+function formatDateTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const pad = (n) => String(n).padStart(2, "0");
+  const y = date.getFullYear();
+  const m = pad(date.getMonth() + 1);
+  const d = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mm = pad(date.getMinutes());
+  const ss = pad(date.getSeconds());
+  return `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
+}
+
 function renderJsonEditor(title, json, onSubmit) {
   view.insertAdjacentHTML(
     "beforeend",
@@ -635,7 +649,7 @@ async function renderInstances() {
         ${chart(mem, "内存")}
         ${chart(disk, "磁盘")}
       `;
-      meta.textContent = `更新时间：${latest.timestamp || "-"}`;
+      meta.textContent = `更新时间：${formatDateTime(latest.timestamp) || "-"}`;
     };
 
     board.querySelectorAll("[data-action='refresh']").forEach((btn) => {
@@ -825,7 +839,7 @@ async function renderSqlHistory() {
       (item) => `<tr>
       <td>${escapeHtml(item.sql_type)}</td>
       <td>${escapeHtml(item.database_name)}</td>
-      <td>${escapeHtml(item.executed_at)}</td>
+      <td>${escapeHtml(formatDateTime(item.executed_at))}</td>
       <td>${formatExecStatus(item.status)}</td>
     </tr>`
     )
@@ -868,7 +882,7 @@ async function renderBackupTaskBoard() {
               <td>${escapeHtml(r.instance_alias)}</td>
               <td>${escapeHtml(r.backup_type_display)}</td>
               <td>${formatExecStatus(r.status)}</td>
-              <td>${escapeHtml(r.created_at)}</td>
+              <td>${escapeHtml(formatDateTime(r.created_at))}</td>
             </tr>`
           )
           .join("")
@@ -1062,7 +1076,7 @@ async function renderBackupRecords() {
         <td>${escapeHtml(r.instance_alias)}</td>
         <td>${escapeHtml(r.backup_type_display)}</td>
         <td>${escapeHtml(r.status_display)}</td>
-        <td>${escapeHtml(r.created_at)}</td>
+        <td>${escapeHtml(formatDateTime(r.created_at))}</td>
         <td>
           <button class="ghost" data-action="download" data-id="${r.id}">下载</button>
           <button class="ghost" data-action="restore" data-id="${r.id}">恢复</button>
@@ -1121,7 +1135,7 @@ async function renderBackupTasks() {
         <td>${escapeHtml(t.name)}</td>
         <td>${escapeHtml(t.backup_type_display)}</td>
         <td>${escapeHtml(t.status_display)}</td>
-        <td>${escapeHtml(t.run_at)}</td>
+        <td>${escapeHtml(formatDateTime(t.run_at))}</td>
         <td>
           <button class="ghost" data-action="run" data-id="${t.id}">立即执行</button>
           <button class="ghost" data-action="delete" data-id="${t.id}">删除</button>
@@ -1265,7 +1279,7 @@ async function openBackupTaskForm(task = null) {
       (r) => `<tr>
         <td>${escapeHtml(r.instance_alias)}</td>
         <td>${escapeHtml(r.backup_type_display)}</td>
-        <td>${escapeHtml(r.created_at)}</td>
+        <td>${escapeHtml(formatDateTime(r.created_at))}</td>
         <td>
           <button class="ghost" data-action="restore" data-id="${r.id}">从记录恢复</button>
           <button class="ghost" data-action="download" data-id="${r.id}">下载</button>
