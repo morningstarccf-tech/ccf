@@ -318,12 +318,13 @@ main#view {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-height: 420px;
 }
 
 .sql-output {
   margin: 0;
-  min-height: 160px;
-  max-height: 420px;
+  min-height: 320px;
+  max-height: 640px;
   overflow: auto;
   font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
   font-size: 13px;
