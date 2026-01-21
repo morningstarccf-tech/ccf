@@ -860,7 +860,6 @@ async function renderBackupTaskBoard() {
   const records = normalizeList(data);
   const groups = {
     pending: [],
-    running: [],
     done: [],
   };
   records.forEach((r) => {
@@ -868,7 +867,7 @@ async function renderBackupTaskBoard() {
     if (["pending", "queued", "waiting"].includes(status)) {
       groups.pending.push(r);
     } else if (["running", "in_progress", "processing"].includes(status)) {
-      groups.running.push(r);
+      groups.pending.push(r);
     } else {
       groups.done.push(r);
     }
@@ -896,13 +895,6 @@ async function renderBackupTaskBoard() {
           <table>
             <thead><tr><th>实例</th><th>类型</th><th>状态</th><th>时间</th></tr></thead>
             <tbody>${renderRows(groups.pending)}</tbody>
-          </table>
-        </div>
-        <div class="task-column">
-          <h4>执行中（${groups.running.length}）</h4>
-          <table>
-            <thead><tr><th>实例</th><th>类型</th><th>状态</th><th>时间</th></tr></thead>
-            <tbody>${renderRows(groups.running)}</tbody>
           </table>
         </div>
         <div class="task-column">
@@ -1584,10 +1576,31 @@ async function renderAuthTeams() {
     </div>`
   );
   document.getElementById("add-team").onclick = () => {
-    renderJsonEditor("新增团队", { name: "", description: "" }, async (value) => {
-      await apiFetch("/api/auth/teams/", { method: "POST", body: JSON.stringify(value) });
-      await renderAuthTeams();
-    });
+    openTeamForm();
+  };
+}
+
+function openTeamForm() {
+  openModal(
+    "新增团队",
+    `<form id="team-form">
+      <div class="modal-grid">
+        <label>团队名称<input name="name" required></label>
+        <label>描述<textarea name="description" rows="3"></textarea></label>
+      </div>
+      <div class="toolbar" style="margin-top:16px;">
+        <button class="primary" type="submit">保存</button>
+      </div>
+    </form>`
+  );
+
+  document.getElementById("team-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const payload = Object.fromEntries(formData.entries());
+    await apiFetch("/api/auth/teams/", { method: "POST", body: JSON.stringify(payload) });
+    closeModal();
+    await renderAuthTeams();
   };
 }
 

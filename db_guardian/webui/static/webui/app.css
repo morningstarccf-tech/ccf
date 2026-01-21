@@ -144,6 +144,14 @@ body {
   color: var(--text);
 }
 
+.input-control {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+}
+
 .ghost {
   padding: 8px 12px;
   border-radius: 8px;
