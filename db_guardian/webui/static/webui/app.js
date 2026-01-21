@@ -25,6 +25,7 @@ const routes = {
   metrics: { title: "监控指标", render: renderMetrics },
   "sql-terminal": { title: "SQL 终端", render: renderSqlTerminal },
   "sql-history": { title: "SQL 执行历史", render: renderSqlHistory },
+  "backup-taskboard": { title: "任务列表", render: renderBackupTaskBoard },
   "backup-strategies": { title: "备份策略", render: renderBackupStrategies },
   "backup-records": { title: "备份记录", render: renderBackupRecords },
   "backup-tasks": { title: "定时任务", render: renderBackupTasks },
@@ -840,6 +841,128 @@ async function renderSqlHistory() {
   );
 }
 
+async function renderBackupTaskBoard() {
+  const data = await apiFetch("/api/backups/records/?ordering=-created_at");
+  const rows = normalizeList(data)
+    .map(
+      (r) => `<tr>
+        <td>${escapeHtml(r.instance_alias)}</td>
+        <td>${escapeHtml(r.backup_type_display)}</td>
+        <td>${formatExecStatus(r.status)}</td>
+        <td>${escapeHtml(r.created_at)}</td>
+      </tr>`
+    )
+    .join("");
+  setView(
+    "任务列表",
+    `<div class="card">
+      <table>
+        <thead><tr><th>实例</th><th>类型</th><th>状态</th><th>时间</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`
+  );
+}
+
+async function openBackupStrategyForm(strategy = null) {
+  await ensureInstances();
+  const data = {
+    name: strategy?.name || "",
+    instance_id: strategy?.instance?.id || "",
+    cron_expression: strategy?.cron_expression || "0 2 * * *",
+    backup_type: strategy?.backup_type || "full",
+    retention_days: strategy?.retention_days ?? 7,
+    is_enabled: strategy?.is_enabled ?? true,
+    storage_mode: strategy?.storage_mode || "default",
+    storage_path: strategy?.storage_path || "",
+    compress: strategy?.compress ?? true,
+    databases: Array.isArray(strategy?.databases) ? strategy.databases.join(",") : "",
+  };
+
+  const instanceOptions = state.instances
+    .map(
+      (i) =>
+        `<option value="${i.id}" ${
+          String(i.id) === String(data.instance_id) ? "selected" : ""
+        }>${escapeHtml(i.alias)}</option>`
+    )
+    .join("");
+
+  openModal(
+    strategy ? "编辑备份策略" : "新增备份策略",
+    `<form id="strategy-form">
+      <div class="modal-grid">
+        <label>策略名称<input name="name" value="${escapeHtml(data.name)}" required></label>
+        <label>实例
+          <select name="instance_id" required>
+            <option value="">请选择</option>
+            ${instanceOptions}
+          </select>
+        </label>
+        <label>备份类型
+          <select name="backup_type">
+            <option value="full" ${data.backup_type === "full" ? "selected" : ""}>全量备份</option>
+            <option value="incremental" ${data.backup_type === "incremental" ? "selected" : ""}>增量备份</option>
+            <option value="hot" ${data.backup_type === "hot" ? "selected" : ""}>热备份</option>
+            <option value="cold" ${data.backup_type === "cold" ? "selected" : ""}>冷备份</option>
+          </select>
+        </label>
+        <label>Cron 表达式<input name="cron_expression" value="${escapeHtml(data.cron_expression)}" required></label>
+        <label>保留天数<input name="retention_days" type="number" min="1" value="${data.retention_days}" required></label>
+        <label>存储位置
+          <select name="storage_mode">
+            <option value="default" ${data.storage_mode === "default" ? "selected" : ""}>默认容器路径</option>
+            <option value="mysql_host" ${data.storage_mode === "mysql_host" ? "selected" : ""}>MySQL 服务器路径</option>
+            <option value="remote_server" ${data.storage_mode === "remote_server" ? "selected" : ""}>远程服务器路径</option>
+            <option value="oss" ${data.storage_mode === "oss" ? "selected" : ""}>云存储（OSS）</option>
+          </select>
+        </label>
+        <label>存储路径<input name="storage_path" value="${escapeHtml(data.storage_path)}"></label>
+        <label>数据库列表（逗号分隔）<input name="databases" value="${escapeHtml(data.databases)}"></label>
+        <label>是否启用
+          <select name="is_enabled">
+            <option value="true" ${data.is_enabled ? "selected" : ""}>启用</option>
+            <option value="false" ${!data.is_enabled ? "selected" : ""}>禁用</option>
+          </select>
+        </label>
+        <label>是否压缩
+          <select name="compress">
+            <option value="true" ${data.compress ? "selected" : ""}>是</option>
+            <option value="false" ${!data.compress ? "selected" : ""}>否</option>
+          </select>
+        </label>
+      </div>
+      <div class="toolbar" style="margin-top:16px;">
+        <button class="primary" type="submit">保存</button>
+      </div>
+    </form>`
+  );
+
+  document.getElementById("strategy-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const payload = Object.fromEntries(formData.entries());
+    payload.instance_id = payload.instance_id ? Number(payload.instance_id) : null;
+    payload.retention_days = Number(payload.retention_days || 7);
+    payload.is_enabled = payload.is_enabled === "true";
+    payload.compress = payload.compress === "true";
+    payload.databases = payload.databases
+      ? payload.databases.split(",").map((d) => d.trim()).filter(Boolean)
+      : null;
+
+    if (!payload.instance_id) {
+      alert("请选择实例");
+      return;
+    }
+
+    const url = strategy ? `/api/backups/strategies/${strategy.id}/` : "/api/backups/strategies/";
+    const method = strategy ? "PATCH" : "POST";
+    await apiFetch(url, { method, body: JSON.stringify(payload) });
+    closeModal();
+    await renderBackupStrategies();
+  };
+}
+
 async function renderBackupStrategies() {
   const data = await apiFetch("/api/backups/strategies/");
   const rows = normalizeList(data)
@@ -852,7 +975,7 @@ async function renderBackupStrategies() {
           <button class="ghost" data-action="enable" data-id="${s.id}">启用</button>
           <button class="ghost" data-action="disable" data-id="${s.id}">禁用</button>
           <button class="ghost" data-action="edit" data-id="${s.id}">编辑</button>
-          <button class="danger" data-action="delete" data-id="${s.id}">删除</button>
+          <button class="ghost" data-action="delete" data-id="${s.id}">删除</button>
         </td>
       </tr>`
     )
@@ -870,18 +993,7 @@ async function renderBackupStrategies() {
     </div>`
   );
   document.getElementById("add-strategy").onclick = () => {
-    renderJsonEditor("新增策略", {
-      name: "",
-      instance_id: null,
-      cron_expression: "0 2 * * *",
-      backup_type: "full",
-      retention_days: 7,
-      is_enabled: true,
-      storage_mode: "default",
-    }, async (value) => {
-      await apiFetch("/api/backups/strategies/", { method: "POST", body: JSON.stringify(value) });
-      await renderBackupStrategies();
-    });
+    openBackupStrategyForm();
   };
   view.querySelectorAll("button[data-action]").forEach((btn) => {
     btn.onclick = async () => {
@@ -891,10 +1003,7 @@ async function renderBackupStrategies() {
       if (action === "disable") await apiFetch(`/api/backups/strategies/${id}/disable/`, { method: "POST" });
       if (action === "edit") {
         const target = normalizeList(data).find((i) => String(i.id) === id);
-        renderJsonEditor("编辑策略", target, async (value) => {
-          await apiFetch(`/api/backups/strategies/${id}/`, { method: "PATCH", body: JSON.stringify(value) });
-          await renderBackupStrategies();
-        });
+        openBackupStrategyForm(target);
         return;
       }
       if (action === "delete") {
@@ -919,7 +1028,7 @@ async function renderBackupRecords() {
           <button class="ghost" data-action="download" data-id="${r.id}">下载</button>
           <button class="ghost" data-action="restore" data-id="${r.id}">恢复</button>
           <button class="ghost" data-action="verify" data-id="${r.id}">验证</button>
-          <button class="danger" data-action="delete" data-id="${r.id}">删除</button>
+          <button class="ghost" data-action="delete" data-id="${r.id}">删除</button>
         </td>
       </tr>`
     )
@@ -976,7 +1085,7 @@ async function renderBackupTasks() {
         <td>${escapeHtml(t.run_at)}</td>
         <td>
           <button class="ghost" data-action="run" data-id="${t.id}">立即执行</button>
-          <button class="danger" data-action="delete" data-id="${t.id}">删除</button>
+          <button class="ghost" data-action="delete" data-id="${t.id}">删除</button>
         </td>
       </tr>`
     )
