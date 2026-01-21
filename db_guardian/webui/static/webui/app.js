@@ -1209,7 +1209,6 @@ async function navigate() {
 }
 
 document.getElementById("logout-btn").onclick = logout;
-document.getElementById("refresh-view").onclick = navigate;
 
 loginForm.addEventListener("submit", async (e) => {
   e.preventDefault();
