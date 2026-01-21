@@ -410,6 +410,20 @@ class MetricsCollector:
                 idle = float(idle_match.group(1))
                 metrics['cpu_usage'] = round(max(0.0, 100.0 - idle), 2)
 
+        if 'cpu_usage' not in metrics:
+            code, stdout, _ = executor.run("LANG=C mpstat 1 1 | awk '/Average/ {print 100-$NF}'")
+            if code == 0 and stdout:
+                value = stdout.strip().splitlines()[-1].strip()
+                if value.replace('.', '', 1).isdigit():
+                    metrics['cpu_usage'] = round(float(value), 2)
+
+        if 'cpu_usage' not in metrics:
+            code, stdout, _ = executor.run("awk '/^cpu / {total=$2+$3+$4+$5+$6+$7+$8+$9; idle=$5; if (total>0) print (1-idle/total)*100;}' /proc/stat")
+            if code == 0 and stdout:
+                value = stdout.strip().splitlines()[-1].strip()
+                if value.replace('.', '', 1).isdigit():
+                    metrics['cpu_usage'] = round(float(value), 2)
+
         # Memory usage
         code, stdout, _ = executor.run("LANG=C free -m | awk '/Mem:/ {print $2\" \"$3}'")
         if code == 0 and stdout:
@@ -419,6 +433,13 @@ class MetricsCollector:
                 used = float(parts[1])
                 if total > 0:
                     metrics['memory_usage'] = round((used / total) * 100, 2)
+
+        if 'memory_usage' not in metrics:
+            code, stdout, _ = executor.run("awk '/MemTotal/ {t=$2} /MemAvailable/ {a=$2} END {if (t>0) print (t-a)/t*100}' /proc/meminfo")
+            if code == 0 and stdout:
+                value = stdout.strip().splitlines()[-1].strip()
+                if value.replace('.', '', 1).isdigit():
+                    metrics['memory_usage'] = round(float(value), 2)
 
         # Disk usage
         disk_path = instance.data_dir or '/'
