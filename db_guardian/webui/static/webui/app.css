@@ -564,7 +564,8 @@ th {
 }
 
 .modal-grid input,
-.modal-grid select {
+.modal-grid select,
+.modal-grid textarea {
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid var(--border);

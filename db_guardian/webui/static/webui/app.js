@@ -242,6 +242,7 @@ function formatExecStatus(status) {
     error: { label: "失败", cls: "status-failed" },
     running: { label: "执行中", cls: "status-running" },
     pending: { label: "待执行", cls: "status-pending" },
+    stale: { label: "异常", cls: "status-failed" },
   };
   const fallback = { label: "未知", cls: "status-unknown" };
   const info = map[normalized] || fallback;
@@ -862,14 +863,24 @@ async function renderBackupTaskBoard() {
     pending: [],
     done: [],
   };
+  const now = Date.now();
+  const staleThresholdMs = 24 * 60 * 60 * 1000;
   records.forEach((r) => {
     const status = (r.status || "").toLowerCase();
-    if (["pending", "queued", "waiting"].includes(status)) {
-      groups.pending.push(r);
-    } else if (["running", "in_progress", "processing"].includes(status)) {
-      groups.pending.push(r);
+    const createdAt = r.created_at ? new Date(r.created_at).getTime() : 0;
+    const isStale =
+      createdAt &&
+      now - createdAt > staleThresholdMs &&
+      ["pending", "queued", "waiting", "running", "in_progress", "processing"].includes(status);
+    const displayStatus = isStale ? "stale" : status;
+
+    if (
+      ["pending", "queued", "waiting", "running", "in_progress", "processing"].includes(status) &&
+      !isStale
+    ) {
+      groups.pending.push({ ...r, _status: displayStatus });
     } else {
-      groups.done.push(r);
+      groups.done.push({ ...r, _status: displayStatus });
     }
   });
 
@@ -880,7 +891,7 @@ async function renderBackupTaskBoard() {
             (r) => `<tr>
               <td>${escapeHtml(r.instance_alias)}</td>
               <td>${escapeHtml(r.backup_type_display)}</td>
-              <td>${formatExecStatus(r.status)}</td>
+              <td>${formatExecStatus(r._status || r.status)}</td>
               <td>${escapeHtml(formatDateTime(r.created_at))}</td>
             </tr>`
           )
@@ -1400,7 +1411,7 @@ async function renderAuthUsers() {
         <td>${u.is_active ? "启用" : "停用"}</td>
         <td>
           ${canEdit ? `<button class="ghost" data-action="edit" data-id="${u.id}">编辑</button>` : ""}
-          ${canManageUsers ? `<button class="danger" data-action="delete" data-id="${u.id}">删除</button>` : ""}
+          ${canManageUsers ? `<button class="ghost" data-action="delete" data-id="${u.id}">删除</button>` : ""}
         </td>
       </tr>`;
     })
@@ -1586,7 +1597,7 @@ function openTeamForm() {
     `<form id="team-form">
       <div class="modal-grid">
         <label>团队名称<input name="name" required></label>
-        <label>描述<textarea name="description" rows="3"></textarea></label>
+        <label>描述<textarea name="description" rows="3" class="input-control"></textarea></label>
       </div>
       <div class="toolbar" style="margin-top:16px;">
         <button class="primary" type="submit">保存</button>
