@@ -1445,7 +1445,10 @@ async function renderAuthUsers() {
               </select>
             </label>
             <label>所属团队（可选）
-              <select name="team_ids" multiple class="input-control">${teamOptions}</select>
+              <select name="team_ids" class="input-control">
+                <option value="">请选择团队</option>
+                ${teamOptions}
+              </select>
             </label>
             <label>角色（团队必填）
               <select name="role_id" class="input-control">
@@ -1521,9 +1524,9 @@ async function renderAuthUsers() {
     try {
       if (mode === "create") {
         payload.password = form.password.value;
-        const selectedTeams = Array.from(form.team_ids.selectedOptions).map((o) => Number(o.value));
-        if (selectedTeams.length) {
-          payload.team_ids = selectedTeams;
+        const teamId = Number(form.team_ids.value || 0);
+        if (teamId) {
+          payload.team_ids = [teamId];
           if (!form.role_id.value) {
             errorBox.textContent = "选择团队时必须指定角色";
             return;
