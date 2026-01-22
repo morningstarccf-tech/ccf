@@ -1445,10 +1445,10 @@ async function renderAuthUsers() {
               </select>
             </label>
             <label>所属团队（可选）
-              <select name="team_ids" multiple>${teamOptions}</select>
+              <select name="team_ids" multiple class="input-control">${teamOptions}</select>
             </label>
             <label>角色（团队必填）
-              <select name="role_id">
+              <select name="role_id" class="input-control">
                 <option value="">请选择角色</option>
                 ${roleOptions}
               </select>
