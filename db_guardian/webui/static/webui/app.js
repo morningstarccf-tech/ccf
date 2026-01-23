@@ -1830,8 +1830,20 @@ window.addEventListener("hashchange", navigate);
 })();
 
 function initPetals() {
+  // 1. 登录页花瓣
   const container = document.getElementById("petal-container");
-  if (!container || container.children.length) return;
+  if (container && !container.children.length) {
+    createPetals(container);
+  }
+
+  // 2. 后台页花瓣
+  const bgContainer = document.getElementById("bg-petals");
+  if (bgContainer && !bgContainer.children.length) {
+    createPetals(bgContainer);
+  }
+}
+
+function createPetals(container) {
   const petalCount = 18;
   const colors = ["rgba(255,255,255,0.9)", "rgba(255,192,203,0.9)"];
   for (let i = 0; i < petalCount; i += 1) {

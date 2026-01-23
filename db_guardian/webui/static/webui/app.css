@@ -1,12 +1,12 @@
 :root {
   --bg: #0f1117;
-  --panel: #141824;
-  --panel-2: #1b2132;
+  --panel: rgba(60, 20, 40, 0.65);
+  --panel-2: rgba(80, 30, 50, 0.65);
   --text: #eef1f7;
-  --muted: #a4adbd;
-  --accent: #4c8dff;
+  --muted: #d0d0d5;
+  --accent: #ff69b4;
   --danger: #ff5f6d;
-  --border: #2a3246;
+  --border: rgba(255, 255, 255, 0.3);
   --shadow: 0 18px 40px rgba(5, 10, 20, 0.5);
 }
 
@@ -21,7 +21,8 @@
 body {
   margin: 0;
   font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
-  background: var(--bg);
+  background: url('./assets/1.jpg') no-repeat center center fixed;
+  background-size: cover;
   color: var(--text);
 }
 
@@ -32,9 +33,10 @@ body {
 
 .sidebar {
   width: 260px;
-  background: linear-gradient(180deg, #0f1320, #151a28);
+  background: var(--panel);
   border-right: 1px solid var(--border);
   padding: 20px 16px;
+  backdrop-filter: blur(10px);
 }
 
 .brand {
@@ -833,7 +835,8 @@ th {
   background: #6b6571;
 }
 
-#petal-container {
+#petal-container,
+.petal-container-fixed {
   position: absolute;
   inset: 0;
   overflow: hidden;
