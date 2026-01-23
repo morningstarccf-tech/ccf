@@ -32,8 +32,7 @@ const routes = {
   "backup-restore": { title: "恢复", render: renderBackupRestore },
   "auth-users": { title: "用户", render: renderAuthUsers },
   "auth-teams": { title: "团队", render: renderAuthTeams },
-  "auth-roles": { title: "角色", render: renderAuthRoles },
-  "auth-permissions": { title: "权限", render: renderAuthPermissions },
+  "auth-access": { title: "角色与权限", render: renderAuthAccess },
   account: { title: "修改密码", render: renderAccount },
 };
 
@@ -1616,6 +1615,22 @@ function openTeamForm() {
     closeModal();
     await renderAuthTeams();
   };
+}
+
+function renderAuthAccess() {
+  setView(
+    "角色与权限",
+    `<div class="card">
+      <h3>说明</h3>
+      <p class="muted">本系统当前使用“团队 + 角色”来管理访问权限。为了简化界面，角色与权限页面合并为说明页。</p>
+      <div class="info-list">
+        <p>• 角色：代表一组权限集合，用于统一授权。</p>
+        <p>• 权限：具体到功能/资源的访问许可。</p>
+        <p>• 使用方式：在“用户”页面为成员分配团队和角色，系统按角色权限控制操作。</p>
+        <p>• 如需细粒度权限管理，可后续开启独立角色/权限管理页面。</p>
+      </div>
+    </div>`
+  );
 }
 
 async function renderAuthRoles() {
