@@ -318,6 +318,40 @@ main#view {
   cursor: pointer;
 }
 
+.info-section {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+
+.info-section h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.info-subsection {
+  margin-top: 8px;
+}
+
+.info-subsection h5 {
+  margin: 6px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.info-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.info-list li {
+  margin-bottom: 4px;
+}
+
 .pie {
   width: 72px;
   height: 72px;

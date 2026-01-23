@@ -262,6 +262,15 @@ function formatDateTime(value) {
   return `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
 }
 
+function groupBy(items, keyGetter) {
+  return items.reduce((acc, item) => {
+    const key = keyGetter(item);
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(item);
+    return acc;
+  }, {});
+}
+
 function renderJsonEditor(title, json, onSubmit) {
   view.insertAdjacentHTML(
     "beforeend",
@@ -1617,20 +1626,82 @@ function openTeamForm() {
   };
 }
 
-function renderAuthAccess() {
+async function renderAuthAccess() {
   setView(
     "角色与权限",
-    `<div class="card">
-      <h3>说明</h3>
-      <p class="muted">本系统当前使用“团队 + 角色”来管理访问权限。为了简化界面，角色与权限页面合并为说明页。</p>
-      <div class="info-list">
-        <p>• 角色：代表一组权限集合，用于统一授权。</p>
-        <p>• 权限：具体到功能/资源的访问许可。</p>
-        <p>• 使用方式：在“用户”页面为成员分配团队和角色，系统按角色权限控制操作。</p>
-        <p>• 如需细粒度权限管理，可后续开启独立角色/权限管理页面。</p>
-      </div>
-    </div>`
+    `<div class="card"><p class="muted">加载中...</p></div>`
   );
+  try {
+    const [rolesData, permsData] = await Promise.all([
+      apiFetch("/api/auth/roles/"),
+      apiFetch("/api/auth/permissions/"),
+    ]);
+    const roles = normalizeList(rolesData);
+    const permissions = normalizeList(permsData);
+
+    const permGroups = groupBy(
+      permissions,
+      (p) => p.category_display || p.category || "其他"
+    );
+    const permHtml = Object.entries(permGroups)
+      .map(([category, perms]) => {
+        const items = perms
+          .map(
+            (p) => `<li><strong>${escapeHtml(p.name)}</strong>（${escapeHtml(p.slug)}）${p.description ? `：${escapeHtml(p.description)}` : ""}</li>`
+          )
+          .join("");
+        return `<div class="info-section">
+          <h4>${escapeHtml(category)}（${perms.length}）</h4>
+          <ul class="info-list">${items}</ul>
+        </div>`;
+      })
+      .join("");
+
+    const roleHtml = roles
+      .map((role) => {
+        const perms = Array.isArray(role.permissions) ? role.permissions : [];
+        const grouped = groupBy(
+          perms,
+          (p) => p.category_display || p.category || "其他"
+        );
+        const groupedHtml = Object.entries(grouped)
+          .map(([category, list]) => {
+            const entries = list
+              .map((p) => `<li>${escapeHtml(p.name)}（${escapeHtml(p.slug)}）</li>`)
+              .join("");
+            return `<div class="info-subsection">
+              <h5>${escapeHtml(category)}（${list.length}）</h5>
+              <ul class="info-list">${entries}</ul>
+            </div>`;
+          })
+          .join("");
+        return `<div class="info-section">
+          <h4>${escapeHtml(role.name)}${role.is_builtin ? "（内置）" : ""}</h4>
+          <p class="muted">${escapeHtml(role.description || "暂无描述")}</p>
+          ${groupedHtml || `<p class="muted">暂无权限配置</p>`}
+        </div>`;
+      })
+      .join("");
+
+    setView(
+      "角色与权限",
+      `<div class="card">
+        <h3>系统权限清单</h3>
+        <p class="muted">系统权限按功能分类组织，用于控制不同模块的访问与操作。</p>
+        ${permHtml || `<p class="muted">暂无权限数据</p>`}
+      </div>
+      <div class="card">
+        <h3>角色与权限分配</h3>
+        <p class="muted">角色是一组权限的集合，用户通过团队成员关系获得角色权限。</p>
+        ${roleHtml || `<p class="muted">暂无角色数据</p>`}
+      </div>`
+    );
+  } catch (err) {
+    setView(
+      "角色与权限",
+      `<div class="card"><p class="error-text">加载失败：${escapeHtml(err.message)}</p></div>`
+    );
+  }
 }
 
 async function renderAuthRoles() {
