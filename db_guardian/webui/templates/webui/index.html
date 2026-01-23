@@ -40,9 +40,7 @@
           <a href="#auth-teams" class="nav-link">团队</a>
           <a href="#auth-access" class="nav-link">角色与权限</a>
 
-          <div class="nav-group">账号管理</div>
-          <a href="#account" class="nav-link">修改密码</a>
-          <button class="nav-link nav-button" id="logout-btn">注销</button>
+          <!-- 账号管理已迁移到右上角头像菜单 -->
         </nav>
       </aside>
 
@@ -52,7 +50,19 @@
             <h2 id="view-title">概览</h2>
           </div>
           <div class="topbar-right">
-            <span id="user-badge">未登录</span>
+            <div class="user-menu" id="user-menu">
+              <button class="user-avatar" id="user-avatar" type="button" aria-haspopup="true" aria-expanded="false">
+                <span id="user-initial">U</span>
+              </button>
+              <div class="user-dropdown" id="user-dropdown">
+                <div class="user-info">
+                  <strong id="user-name">未登录</strong>
+                  <span class="muted" id="user-email"></span>
+                </div>
+                <button class="ghost" id="user-password" type="button">修改密码</button>
+                <button class="ghost" id="user-logout" type="button">注销</button>
+              </div>
+            </div>
           </div>
         </header>
 

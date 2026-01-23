@@ -12,7 +12,12 @@ const titleEl = document.getElementById("view-title");
 const overlay = document.getElementById("login-overlay");
 const loginForm = document.getElementById("login-form");
 const loginError = document.getElementById("login-error");
-const userBadge = document.getElementById("user-badge");
+const userMenu = document.getElementById("user-menu");
+const userAvatar = document.getElementById("user-avatar");
+const userDropdown = document.getElementById("user-dropdown");
+const userNameEl = document.getElementById("user-name");
+const userEmailEl = document.getElementById("user-email");
+const userInitialEl = document.getElementById("user-initial");
 const modalOverlay = document.getElementById("modal-overlay");
 const modalTitle = document.getElementById("modal-title");
 const modalBody = document.getElementById("modal-body");
@@ -66,6 +71,9 @@ function setActiveNav(route) {
 function showLogin(show) {
   overlay.classList.toggle("hidden", !show);
   document.getElementById("app").style.display = show ? "none" : "flex";
+  if (userMenu) {
+    userMenu.style.display = show ? "none" : "flex";
+  }
 }
 
 function openModal(title, html) {
@@ -195,9 +203,13 @@ async function loadUser() {
   try {
     const user = await apiFetch("/api/auth/users/me/");
     state.user = user;
-    userBadge.textContent = `${user.username || "已登录"}`;
+    if (userNameEl) userNameEl.textContent = user.username || "已登录";
+    if (userEmailEl) userEmailEl.textContent = user.email || "";
+    if (userInitialEl) userInitialEl.textContent = (user.username || "U").slice(0, 1).toUpperCase();
   } catch {
-    userBadge.textContent = "未登录";
+    if (userNameEl) userNameEl.textContent = "未登录";
+    if (userEmailEl) userEmailEl.textContent = "";
+    if (userInitialEl) userInitialEl.textContent = "U";
   }
 }
 
@@ -208,7 +220,9 @@ function logout() {
   localStorage.removeItem("av_access");
   localStorage.removeItem("av_refresh");
   showLogin(true);
-  userBadge.textContent = "未登录";
+  if (userNameEl) userNameEl.textContent = "未登录";
+  if (userEmailEl) userEmailEl.textContent = "";
+  if (userInitialEl) userInitialEl.textContent = "U";
 }
 
 function normalizeList(data) {
@@ -1768,7 +1782,27 @@ async function navigate() {
   titleEl.textContent = title;
 }
 
-document.getElementById("logout-btn").onclick = logout;
+if (userAvatar && userDropdown) {
+  userAvatar.onclick = () => {
+    const expanded = userAvatar.getAttribute("aria-expanded") === "true";
+    userAvatar.setAttribute("aria-expanded", String(!expanded));
+    userDropdown.classList.toggle("open", !expanded);
+  };
+  document.addEventListener("click", (event) => {
+    if (!userMenu || userMenu.contains(event.target)) return;
+    userAvatar.setAttribute("aria-expanded", "false");
+    userDropdown.classList.remove("open");
+  });
+}
+
+document.getElementById("user-logout").onclick = logout;
+document.getElementById("user-password").onclick = () => {
+  window.location.hash = "#account";
+  if (userDropdown) {
+    userAvatar?.setAttribute("aria-expanded", "false");
+    userDropdown.classList.remove("open");
+  }
+};
 
 loginForm.addEventListener("submit", async (e) => {
   e.preventDefault();
