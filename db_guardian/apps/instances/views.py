@@ -284,6 +284,7 @@ class MySQLInstanceViewSet(viewsets.ModelViewSet):
         refresh = str(request.query_params.get('refresh', '')).lower() in ('1', 'true', 'yes')
         if refresh:
             try:
+                # 按需从实例拉取最新库列表。
                 DatabaseSyncService.sync_databases(
                     instance,
                     refresh_stats=True,

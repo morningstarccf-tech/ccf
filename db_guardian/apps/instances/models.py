@@ -266,6 +266,7 @@ class MySQLInstance(models.Model):
                 # 密码已更改，需要重新加密
                 self.password = PasswordEncryptor.encrypt(self.password)
             if old_instance and old_instance.ssh_password != self.ssh_password:
+                # 只有 SSH 密码发生变化时才重新加密。
                 self.ssh_password = PasswordEncryptor.encrypt(self.ssh_password)
         else:
             # 新建时加密密码
@@ -281,6 +282,7 @@ class MySQLInstance(models.Model):
         Returns:
             str: 明文密码
         """
+        # 运行时解密，用于数据库连接。
         return PasswordEncryptor.decrypt(self.password)
 
     def get_decrypted_ssh_password(self) -> str:
@@ -290,6 +292,7 @@ class MySQLInstance(models.Model):
         Returns:
             str: 明文密码
         """
+        # 运行时解密，用于 SSH 连接。
         return PasswordEncryptor.decrypt(self.ssh_password)
     
     def test_connection(self) -> tuple[bool, str]:

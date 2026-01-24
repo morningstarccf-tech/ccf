@@ -251,6 +251,7 @@ class ExportRequestSerializer(serializers.Serializer):
             # 检查是否有缓存的结果
             if not history.result_cached:
                 raise serializers.ValidationError('该查询结果未缓存，无法导出')
+            # 这里只校验存在性和缓存状态，权限由视图层校验。
             return value
         except QueryHistory.DoesNotExist:
             raise serializers.ValidationError('查询历史记录不存在')

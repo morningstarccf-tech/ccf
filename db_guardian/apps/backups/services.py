@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 try:
     import oss2
-except ImportError:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - 可选依赖
     oss2 = None
 
 
@@ -59,6 +59,7 @@ class RemoteExecutor:
         return bool(self.host and self.user)
 
     def _connect(self):
+        # 建立 SSH 连接，优先使用密钥认证。
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         if self.key_path:
@@ -69,6 +70,7 @@ class RemoteExecutor:
         return client
 
     def run(self, command: str, timeout: int = 3600) -> tuple[int, str, str]:
+        # 未配置远程主机时本地执行。
         if not self._is_remote():
             result = subprocess.run(
                 command,
@@ -88,6 +90,7 @@ class RemoteExecutor:
             client.close()
 
     def download(self, remote_path: str, local_path: Path) -> None:
+        # 本地执行时把 remote_path 当作本地路径。
         if not self._is_remote():
             shutil.copy2(remote_path, local_path)
             return
@@ -101,6 +104,7 @@ class RemoteExecutor:
             client.close()
 
     def upload(self, local_path: Path, remote_path: str) -> None:
+        # 本地执行时把 remote_path 当作本地路径。
         if not self._is_remote():
             shutil.copy2(local_path, remote_path)
             return
@@ -133,6 +137,7 @@ class RemoteStorageClient:
             raise ValueError('远程主机未设置')
 
     def _build_http_url(self, remote_path: str) -> str:
+        # 如果只给路径则拼成完整 URL。
         if remote_path.startswith('http://') or remote_path.startswith('https://'):
             return remote_path
         port = self.port or 80
@@ -159,6 +164,7 @@ class RemoteStorageClient:
                 pass
 
     def test(self) -> tuple[bool, str]:
+        # 按协议进行轻量连通性检查。
         self._ensure_ready()
         if self.protocol == 'ssh':
             executor = RemoteExecutor(
@@ -190,6 +196,7 @@ class RemoteStorageClient:
         return False, f"不支持的协议: {self.protocol}"
 
     def upload(self, local_path: Path, remote_path: str) -> str:
+        # 按协议执行上传。
         self._ensure_ready()
         if self.protocol == 'ssh':
             executor = RemoteExecutor(
@@ -230,6 +237,7 @@ class RemoteStorageClient:
         raise RuntimeError(f"不支持的协议: {self.protocol}")
 
     def download(self, remote_path: str, local_path: Path) -> None:
+        # 按协议执行下载。
         self._ensure_ready()
         if self.protocol == 'ssh':
             executor = RemoteExecutor(
@@ -363,6 +371,7 @@ class BackupExecutor:
         executor: RemoteExecutor,
         remote_root_override: str | None = None
     ) -> str | None:
+        # 解析远程备份根目录，可覆盖。
         remote_root = (remote_root_override or self.instance.remote_backup_root or '').strip()
         if not remote_root:
             return None
@@ -370,14 +379,17 @@ class BackupExecutor:
             logger.warning("远程备份目录已配置，但未设置 SSH 连接信息")
             return None
         if remote_root_override:
+            # 调用方提供了完整目录，直接使用。
             remote_dir = remote_root.rstrip('/')
         else:
+            # 默认按实例别名分目录。
             safe_alias = self.instance.alias.replace(' ', '_')
             remote_dir = f"{remote_root.rstrip('/')}/{safe_alias}"
         executor.run(f"mkdir -p {shlex.quote(remote_dir)}")
         return f"{remote_dir}/{filename}"
 
     def _build_remote_path(self, filename: str, remote_root_override: str | None = None) -> str | None:
+        # 仅构建远程路径，不访问文件系统。
         remote_root = (remote_root_override or self.instance.remote_backup_root or '').strip()
         if not remote_root:
             return None
@@ -395,12 +407,14 @@ class BackupExecutor:
         remote_root_override: str | None = None,
         remote_config: dict | None = None
     ) -> str | None:
+        # 支持显式远程配置或实例 SSH 上传。
         if remote_config:
             protocol = (remote_config.get('protocol') or 'ssh').lower()
             remote_path = self._build_remote_path(filename, remote_root_override)
             if not remote_path:
                 return None
             if protocol == 'ssh':
+                # 通过临时执行器进行 SSH 上传。
                 executor = RemoteExecutor(
                     host=remote_config.get('host'),
                     port=remote_config.get('port'),
@@ -412,6 +426,7 @@ class BackupExecutor:
                 executor.run(f"mkdir -p {shlex.quote(remote_dir)}")
                 executor.upload(local_path, remote_path)
                 return remote_path
+            # 非 SSH 协议(FTP/HTTP)使用 RemoteStorageClient。
             client = RemoteStorageClient(
                 protocol=protocol,
                 host=remote_config.get('host'),
@@ -422,6 +437,7 @@ class BackupExecutor:
             )
             return client.upload(local_path, remote_path)
 
+        # 回退使用实例级 SSH 凭据。
         executor = RemoteExecutor(self.instance)
         if not executor._is_remote():
             raise RuntimeError('未配置 SSH 连接信息，无法写入 MySQL 服务器路径')
@@ -432,6 +448,7 @@ class BackupExecutor:
         return remote_path
 
     def _upload_to_object_storage(self, local_path: Path, filename: str, config: dict | None = None) -> str | None:
+        # 对象存储上传尽力而为，失败只记录日志。
         uploader = ObjectStorageUploader(config=config)
         try:
             return uploader.upload(local_path, self.instance.alias, filename)
@@ -470,6 +487,7 @@ class BackupExecutor:
         """
         try:
             if backup_type in ['hot', 'cold', 'incremental'] and database_name:
+                # 物理备份不支持单库。
                 return {
                     'success': False,
                     'error_message': '热备/冷备/增量备份不支持指定单个数据库'
@@ -494,6 +512,7 @@ class BackupExecutor:
             file_path = storage_path / filename
             
             if backup_type in ['full']:
+                # 逻辑备份（mysqldump）。
                 return self._execute_logical_backup(
                     database_name,
                     compress,
@@ -508,6 +527,7 @@ class BackupExecutor:
                 )
 
             if backup_type in ['hot']:
+                # 物理热备（xtrabackup）。
                 return self._execute_hot_backup(
                     storage_path,
                     timestamp,
@@ -521,6 +541,7 @@ class BackupExecutor:
                 )
 
             if backup_type in ['cold']:
+                # 物理冷备（停服务）。
                 return self._execute_cold_backup(
                     storage_path,
                     timestamp,
@@ -534,6 +555,7 @@ class BackupExecutor:
                 )
 
             if backup_type in ['incremental']:
+                # 增量备份需要基准全量备份。
                 return self._execute_incremental_backup(
                     storage_path,
                     timestamp,
@@ -569,6 +591,7 @@ class BackupExecutor:
     
     def _get_dump_binary(self) -> str | None:
         """获取可用的导出命令（mysqldump 或 mariadb-dump）。"""
+        # 优先使用 mysqldump，缺省时用 mariadb-dump。
         return shutil.which('mysqldump') or shutil.which('mariadb-dump')
 
     def _get_user_databases(self) -> list[str]:
@@ -576,6 +599,7 @@ class BackupExecutor:
         system_dbs = {'information_schema', 'mysql', 'performance_schema', 'sys'}
         dbs = []
         try:
+            # 获取全部库名并过滤系统库。
             connection = self.instance.get_connection()
             with connection.cursor() as cursor:
                 cursor.execute('SHOW DATABASES')
@@ -591,6 +615,7 @@ class BackupExecutor:
     def _supports_ssl_mode(self, dump_bin: str) -> bool:
         """检测 mysqldump 是否支持 --ssl-mode 选项。"""
         try:
+            # 通过帮助输出检测是否支持参数。
             result = subprocess.run(
                 [dump_bin, '--help'],
                 capture_output=True,
@@ -626,9 +651,10 @@ class BackupExecutor:
         
         # 添加密码（使用环境变量更安全，但为简化直接在命令中）
         if password:
+            # 注意：命令行密码不安全，但为简化保留。
             cmd_parts.append(f'-p"{password}"')
 
-        # SSL/TLS 配置（默认禁用以兼容自签名证书）
+        # 安全传输配置（默认禁用以兼容自签名证书）
         ssl_mode = getattr(settings, 'MYSQL_DUMP_SSL_MODE', 'DISABLED')
         if ssl_mode:
             if self._supports_ssl_mode(dump_bin):
@@ -643,6 +669,7 @@ class BackupExecutor:
 
         ssl_ca = getattr(settings, 'MYSQL_DUMP_SSL_CA', '')
         if ssl_ca:
+            # 如配置了 CA，则传入。
             cmd_parts.append(f'--ssl-ca="{ssl_ca}"')
         
         # 添加常用选项
@@ -658,6 +685,7 @@ class BackupExecutor:
         else:
             include_system = getattr(settings, 'MYSQL_DUMP_INCLUDE_SYSTEM_DATABASES', False)
             if include_system:
+                # 显式开启时包含系统库。
                 cmd_parts.append('--all-databases')
             else:
                 dbs = self._get_user_databases()
@@ -694,6 +722,7 @@ class BackupExecutor:
 
         file_path = storage_path / filename
         try:
+            # 构建 mysqldump 命令（含 SSL 与库过滤）。
             dump_cmd = self._build_mysqldump_command(database_name, str(file_path), dump_bin)
         except ValueError as exc:
             return {
@@ -720,6 +749,7 @@ class BackupExecutor:
 
         final_path = file_path
         if compress:
+            # 压缩 SQL 文件，成功后删除原文件。
             compressed_path = self._compress_file(file_path)
             if compressed_path:
                 final_path = compressed_path
@@ -733,6 +763,7 @@ class BackupExecutor:
         remote_error = None
         if store_remote:
             try:
+                # 上传到配置的远程存储（SSH/FTP/HTTP）。
                 remote_path = self._upload_to_remote(
                     final_path,
                     final_path.name,
@@ -745,6 +776,7 @@ class BackupExecutor:
 
         object_storage_path = ''
         if store_oss:
+            # 对象存储上传为可选，不影响本地成功。
             object_storage_path = self._upload_to_object_storage(
                 final_path,
                 final_path.name,
@@ -759,6 +791,7 @@ class BackupExecutor:
 
         file_path_value = str(final_path) if store_local else ''
         if not store_local:
+            # 未启用本地存储时删除本地文件。
             if final_path.exists():
                 final_path.unlink()
             final_path = Path('')
@@ -784,16 +817,20 @@ class BackupExecutor:
             f'--user={shlex.quote(self.instance.username)}',
         ]
         if password:
+            # 物理备份工具支持直接传密码参数。
             cmd_parts.append(f'--password={shlex.quote(password)}')
         if incremental_base_dir:
+            # 通过基准目录启用增量模式。
             cmd_parts.append(f'--incremental-basedir={shlex.quote(incremental_base_dir)}')
         return ' '.join(cmd_parts)
 
     def _remote_root(self):
+        # 在 MySQL 主机上使用临时目录。
         safe_alias = self.instance.alias.replace(' ', '_')
         return f"/tmp/auroravault/{safe_alias}"
 
     def _archive_remote_dir(self, executor, remote_dir, compress):
+        # 将远程目录打包为 tar（可 gzip）。
         parent_dir = str(Path(remote_dir).parent)
         base_name = Path(remote_dir).name
         suffix = '.tar.gz' if compress else '.tar'
@@ -809,6 +846,7 @@ class BackupExecutor:
         return archive_path
 
     def _strip_archive_suffix(self, filename: str) -> str:
+        # 去掉 tar 后缀获取原目录名。
         name = Path(filename).name
         if name.endswith('.tar.gz'):
             return name[:-7]
@@ -834,11 +872,13 @@ class BackupExecutor:
 
         executor = RemoteExecutor(self.instance)
         remote_root = self._remote_root()
+        # 每次运行使用唯一目录避免冲突。
         backup_dir_name = f"hot_{self.instance.alias}_{timestamp}".replace(' ', '_')
         remote_dir = f"{remote_root}/{backup_dir_name}"
         archive_name = f"{backup_dir_name}.tar.gz" if compress else f"{backup_dir_name}.tar"
         local_path = Path(storage_path) / archive_name
 
+        # 运行前确保远程工作目录存在。
         executor.run(f"mkdir -p {shlex.quote(remote_root)}")
         executor.run(f"mkdir -p {shlex.quote(remote_dir)}")
 
@@ -850,6 +890,7 @@ class BackupExecutor:
         remote_archive = self._archive_remote_dir(executor, remote_dir, compress)
         remote_keep_path = None
         if store_remote and not remote_config:
+            # 可选保留远程副本。
             remote_keep_path = self._get_remote_backup_path(
                 archive_name,
                 executor,
@@ -858,12 +899,14 @@ class BackupExecutor:
         download_source = remote_archive
 
         if remote_keep_path:
+            # 将归档移动到持久化备份目录。
             move_cmd = f"mv {shlex.quote(remote_archive)} {shlex.quote(remote_keep_path)}"
             code, _, err = executor.run(move_cmd, timeout=600)
             if code != 0:
                 return {'success': False, 'error_message': err or '远程备份保存失败'}
             download_source = remote_keep_path
 
+        # 始终下载本地副本便于后续处理。
         executor.download(download_source, local_path)
         executor.run(f"rm -rf {shlex.quote(remote_dir)}")
         if not remote_keep_path:
@@ -872,6 +915,7 @@ class BackupExecutor:
         file_size_mb = local_path.stat().st_size / (1024 * 1024)
         if store_remote and remote_config:
             try:
+                # 如配置外部远程存储则上传。
                 remote_keep_path = self._upload_to_remote(
                     local_path,
                     local_path.name,
@@ -882,6 +926,7 @@ class BackupExecutor:
                 logger.warning(f"远程备份上传失败: {exc}")
         object_storage_path = ''
         if store_oss:
+            # 启用对象存储时上传。
             object_storage_path = self._upload_to_object_storage(
                 local_path,
                 local_path.name,
@@ -890,6 +935,7 @@ class BackupExecutor:
 
         file_path_value = str(local_path) if store_local else ''
         if not store_local and local_path.exists():
+            # 未保存本地时删除本地副本。
             local_path.unlink()
             local_path = Path('')
         return {
@@ -921,11 +967,13 @@ class BackupExecutor:
 
         executor = RemoteExecutor(self.instance)
         remote_root = self._remote_root()
+        # 增量备份使用独立目录并归档。
         backup_dir_name = f"incremental_{self.instance.alias}_{timestamp}".replace(' ', '_')
         remote_dir = f"{remote_root}/{backup_dir_name}"
         archive_name = f"{backup_dir_name}.tar.gz" if compress else f"{backup_dir_name}.tar"
         local_path = Path(storage_path) / archive_name
 
+        # 在远程主机准备基准备份。
         base_archive = Path(base_backup.file_path)
         base_name = self._strip_archive_suffix(base_archive.name)
         remote_base_archive = f"{remote_root}/{base_archive.name}"
@@ -940,6 +988,7 @@ class BackupExecutor:
         )
         executor.run(f"mkdir -p {shlex.quote(remote_dir)}")
 
+        # 基于解压的基准备份执行增量。
         cmd = self._build_xtrabackup_command(remote_dir, incremental_base_dir=remote_base_dir)
         code, _, err = executor.run(cmd, timeout=3600)
         if code != 0:
@@ -948,6 +997,7 @@ class BackupExecutor:
         remote_archive = self._archive_remote_dir(executor, remote_dir, compress)
         remote_keep_path = None
         if store_remote and not remote_config:
+            # 可选保留远程副本。
             remote_keep_path = self._get_remote_backup_path(
                 archive_name,
                 executor,
@@ -956,6 +1006,7 @@ class BackupExecutor:
         download_source = remote_archive
 
         if remote_keep_path:
+            # 将归档移动到持久化备份目录。
             move_cmd = f"mv {shlex.quote(remote_archive)} {shlex.quote(remote_keep_path)}"
             code, _, err = executor.run(move_cmd, timeout=600)
             if code != 0:
@@ -963,6 +1014,7 @@ class BackupExecutor:
             download_source = remote_keep_path
 
         executor.download(download_source, local_path)
+        # 清理远程工作区与基准备份。
         executor.run(
             f"rm -rf {shlex.quote(remote_dir)} "
             f"{shlex.quote(remote_base_dir)} {shlex.quote(remote_base_archive)}"
@@ -973,6 +1025,7 @@ class BackupExecutor:
         file_size_mb = local_path.stat().st_size / (1024 * 1024)
         if store_remote and remote_config:
             try:
+                # 如配置外部远程存储则上传。
                 remote_keep_path = self._upload_to_remote(
                     local_path,
                     local_path.name,
@@ -983,6 +1036,7 @@ class BackupExecutor:
                 logger.warning(f"远程备份上传失败: {exc}")
         object_storage_path = ''
         if store_oss:
+            # 启用对象存储时上传。
             object_storage_path = self._upload_to_object_storage(
                 local_path,
                 local_path.name,
@@ -991,6 +1045,7 @@ class BackupExecutor:
 
         file_path_value = str(local_path) if store_local else ''
         if not store_local and local_path.exists():
+            # 未保存本地时删除本地副本。
             local_path.unlink()
             local_path = Path('')
         return {
@@ -1019,15 +1074,18 @@ class BackupExecutor:
 
         executor = RemoteExecutor(self.instance)
         remote_root = self._remote_root()
+        # 冷备在停库后打包数据目录。
         backup_dir_name = f"cold_{self.instance.alias}_{timestamp}".replace(' ', '_')
         archive_name = f"{backup_dir_name}.tar.gz" if compress else f"{backup_dir_name}.tar"
         remote_archive = f"{remote_root}/{archive_name}"
         local_path = Path(storage_path) / archive_name
 
         if self.instance.deployment_type == 'docker':
+            # 容器部署使用 docker 启停。
             stop_cmd = f"docker stop {shlex.quote(self.instance.docker_container_name)}"
             start_cmd = f"docker start {shlex.quote(self.instance.docker_container_name)}"
         else:
+            # 系统服务部署使用 systemd 启停。
             stop_cmd = f"sudo systemctl stop {shlex.quote(self.instance.mysql_service_name)}"
             start_cmd = f"sudo systemctl start {shlex.quote(self.instance.mysql_service_name)}"
 
@@ -1050,10 +1108,12 @@ class BackupExecutor:
             if code != 0:
                 return {'success': False, 'error_message': err or '冷备份打包失败'}
         finally:
+            # 始终尝试重启以减少停机。
             executor.run(start_cmd, timeout=600)
 
         remote_keep_path = None
         if store_remote and not remote_config:
+            # 可选保留远程副本。
             remote_keep_path = self._get_remote_backup_path(
                 archive_name,
                 executor,
@@ -1061,12 +1121,14 @@ class BackupExecutor:
             )
         download_source = remote_archive
         if remote_keep_path:
+            # 将归档移动到持久化备份目录。
             move_cmd = f"mv {shlex.quote(remote_archive)} {shlex.quote(remote_keep_path)}"
             code, _, err = executor.run(move_cmd, timeout=600)
             if code != 0:
                 return {'success': False, 'error_message': err or '远程备份保存失败'}
             download_source = remote_keep_path
 
+        # 下载归档用于本地/远程/对象存储处理。
         executor.download(download_source, local_path)
         if not remote_keep_path:
             executor.run(f"rm -f {shlex.quote(remote_archive)}")
@@ -1074,6 +1136,7 @@ class BackupExecutor:
         file_size_mb = local_path.stat().st_size / (1024 * 1024)
         if store_remote and remote_config:
             try:
+                # 如配置外部远程存储则上传。
                 remote_keep_path = self._upload_to_remote(
                     local_path,
                     local_path.name,
@@ -1084,6 +1147,7 @@ class BackupExecutor:
                 logger.warning(f"远程备份上传失败: {exc}")
         object_storage_path = ''
         if store_oss:
+            # 启用对象存储时上传。
             object_storage_path = self._upload_to_object_storage(
                 local_path,
                 local_path.name,
@@ -1092,6 +1156,7 @@ class BackupExecutor:
 
         file_path_value = str(local_path) if store_local else ''
         if not store_local and local_path.exists():
+            # 未保存本地时删除本地副本。
             local_path.unlink()
             local_path = Path('')
         return {
@@ -1169,6 +1234,7 @@ class RestoreExecutor:
             # 2. 解压文件（如果需要）
             temp_file = None
             if file_path.suffix == '.gz':
+                # 在同目录解压到临时文件。
                 temp_file = self._decompress_file(file_path)
                 if not temp_file:
                     return {
@@ -1225,6 +1291,7 @@ class RestoreExecutor:
     def _supports_ssl_mode(self, mysql_bin: str) -> bool:
         """检测 mysql 是否支持 --ssl-mode 选项。"""
         try:
+            # 通过 mysql 帮助输出检测 SSL 参数。
             result = subprocess.run(
                 [mysql_bin, '--help'],
                 capture_output=True,
@@ -1252,6 +1319,7 @@ class RestoreExecutor:
             
             with gzip.open(compressed_path, 'rb') as f_in:
                 with open(temp_path, 'wb') as f_out:
+                    # 流式复制，避免大文件占内存。
                     shutil.copyfileobj(f_in, f_out)
             
             logger.info(f"文件解压成功: {temp_path}")
@@ -1286,15 +1354,17 @@ class RestoreExecutor:
         
         # 添加密码
         if password:
+            # 注意：命令行密码不安全，但与 mysqldump 保持一致。
             cmd_parts.append(f'-p"{password}"')
 
-        # SSL/TLS 配置（默认禁用以兼容自签名证书）
+        # 安全传输配置（默认禁用以兼容自签名证书）
         ssl_mode = getattr(settings, 'MYSQL_DUMP_SSL_MODE', 'DISABLED')
         if ssl_mode:
             if self._supports_ssl_mode(mysql_bin):
                 cmd_parts.append(f'--ssl-mode={ssl_mode}')
                 ssl_ca = getattr(settings, 'MYSQL_DUMP_SSL_CA', '')
                 if ssl_ca:
+                    # 显式 CA 用于证书校验。
                     cmd_parts.append(f'--ssl-ca="{ssl_ca}"')
             elif str(ssl_mode).upper() in ('DISABLED', 'DISABLE', 'OFF', '0'):
                 cmd_parts.append('--skip-ssl')
@@ -1437,6 +1507,7 @@ class StrategyManager:
         minute, hour, day_of_month, month_of_year, day_of_week = parts
         
         # 创建或获取 CrontabSchedule
+        # 使用 get_or_create 避免重复调度。
         schedule, _ = CrontabSchedule.objects.get_or_create(
             minute=minute,
             hour=hour,

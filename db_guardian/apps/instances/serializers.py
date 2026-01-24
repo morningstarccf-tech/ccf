@@ -39,6 +39,7 @@ class MySQLInstanceSerializer(serializers.ModelSerializer):
     
     def get_database_count(self, obj):
         """获取数据库数量"""
+        # 使用关联计数，避免加载所有数据库。
         return obj.databases.count()
 
 

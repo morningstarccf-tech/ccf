@@ -121,6 +121,7 @@ class ConnectionPoolManager:
         
         # 如果池中没有可用连接，创建新连接
         if pool['in_use'] < config['max_connections']:
+            # 在最大连接数内创建新的池连接。
             conn = pymysql.connect(
                 host=config['host'],
                 port=config['port'],
@@ -136,6 +137,7 @@ class ConnectionPoolManager:
         
         # 连接池已满，创建临时连接
         logger.warning(f"Connection pool {pool_key} is full, creating temporary connection")
+        # 临时连接不计入连接池使用计数。
         return pymysql.connect(
             host=config['host'],
             port=config['port'],
@@ -157,6 +159,7 @@ class ConnectionPoolManager:
         if pool_key in self._pools:
             pool = self._pools[pool_key]
             if pool['in_use'] > 0:
+                # 仅在存在使用中的连接时才减少计数。
                 pool['in_use'] -= 1
     
     def close_pool(self, instance_id: int) -> None:
@@ -348,6 +351,7 @@ class MetricsCollector:
             
             system_metrics = MetricsCollector._collect_system_metrics(instance)
             if system_metrics:
+                # 合并通过 SSH 采集的系统指标（CPU/内存/磁盘）。
                 metrics.update(system_metrics)
             else:
                 metrics['cpu_usage'] = 0
@@ -402,7 +406,7 @@ class MetricsCollector:
 
         metrics: Dict[str, Any] = {}
 
-        # CPU usage
+        # 处理器使用率
         code, stdout, _ = executor.run("LANG=C top -bn1 | grep 'Cpu(s)'")
         if code == 0 and stdout:
             idle_match = re.search(r'([0-9.]+)\\s*id', stdout)
@@ -424,7 +428,7 @@ class MetricsCollector:
                 if value.replace('.', '', 1).isdigit():
                     metrics['cpu_usage'] = round(float(value), 2)
 
-        # Memory usage
+        # 内存使用率
         code, stdout, _ = executor.run("LANG=C free -m | awk '/Mem:/ {print $2\" \"$3}'")
         if code == 0 and stdout:
             parts = stdout.strip().split()
@@ -441,7 +445,7 @@ class MetricsCollector:
                 if value.replace('.', '', 1).isdigit():
                     metrics['memory_usage'] = round(float(value), 2)
 
-        # Disk usage
+        # 磁盘使用率
         disk_path = instance.data_dir or '/'
         quoted_path = shlex.quote(disk_path)
         code, stdout, _ = executor.run(f"df -P {quoted_path} | tail -1")
@@ -473,6 +477,7 @@ class DatabaseSyncService:
     ) -> Dict[str, Any]:
         system_schemas = {'information_schema', 'mysql', 'performance_schema', 'sys'}
 
+        # 从 information_schema 获取库信息。
         connection = instance.get_connection()
         with connection.cursor() as cursor:
             cursor.execute("""
@@ -515,6 +520,7 @@ class DatabaseSyncService:
 
             if refresh_stats:
                 try:
+                    # 根据需要刷新库表数量与大小统计。
                     database.update_statistics()
                 except Exception as exc:
                     logger.warning(f"Failed to refresh stats for {database}: {exc}")
@@ -522,6 +528,7 @@ class DatabaseSyncService:
             synced.append(name)
 
         if prune_missing:
+            # 删除本地记录中已不存在的数据库。
             queryset = Database.objects.filter(instance=instance)
             if synced:
                 queryset = queryset.exclude(name__in=synced)

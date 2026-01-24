@@ -135,6 +135,7 @@ class BackupStrategyCreateSerializer(serializers.ModelSerializer):
         instance = MySQLInstance.objects.get(id=instance_id)
 
         if backup_type in ['hot', 'cold', 'incremental']:
+            # 物理备份要求配置数据目录与 SSH 访问。
             if not instance.data_dir:
                 raise serializers.ValidationError({
                     'data_dir': '热备/冷备/增量备份必须配置实例数据目录'
@@ -148,6 +149,7 @@ class BackupStrategyCreateSerializer(serializers.ModelSerializer):
                     'databases': '热备/冷备/增量备份不支持指定数据库列表'
                 })
         if backup_type == 'cold':
+            # 冷备需要安全停止/启动 MySQL 的方式。
             if instance.deployment_type == 'docker' and not instance.docker_container_name:
                 raise serializers.ValidationError({
                     'docker_container_name': '冷备份（Docker）必须配置容器名称'
@@ -158,6 +160,7 @@ class BackupStrategyCreateSerializer(serializers.ModelSerializer):
                 })
 
         if storage_mode:
+            # 将 storage_mode 归一为 store_* 标记。
             attrs['store_local'] = storage_mode == 'default'
             attrs['store_remote'] = storage_mode in ['mysql_host', 'remote_server']
             attrs['store_oss'] = storage_mode == 'oss'
@@ -186,6 +189,7 @@ class BackupStrategyCreateSerializer(serializers.ModelSerializer):
                         'remote_host': '请填写远程主机'
                     })
             elif storage_mode == 'oss':
+                # 对象存储需要完整的凭据与目标路径配置。
                 missing = [
                     key for key in [
                         'oss_endpoint', 'oss_access_key_id', 'oss_access_key_secret',
@@ -301,6 +305,7 @@ class BackupRecordSerializer(serializers.ModelSerializer):
         Returns:
             float: 耗时秒数
         """
+        # 委托给模型方法，保持序列化器轻量。
         return obj.get_duration_seconds()
     
     def get_download_url(self, obj):
@@ -316,6 +321,7 @@ class BackupRecordSerializer(serializers.ModelSerializer):
         if obj.status == 'success' and (obj.file_path or obj.remote_path or obj.object_storage_path):
             request = self.context.get('request')
             if request:
+                # 构建前端下载用的绝对 URL。
                 return request.build_absolute_uri(
                     f'/api/backups/records/{obj.id}/download/'
                 )
@@ -352,6 +358,7 @@ class ManualBackupSerializer(serializers.Serializer):
         database_name = attrs.get('database_name')
 
         if backup_type in ['hot', 'cold', 'incremental'] and database_name:
+            # 物理备份不支持单库选择。
             raise serializers.ValidationError({
                 'database_name': '热备/冷备/增量备份不支持指定单个数据库'
             })
@@ -562,6 +569,7 @@ class BackupOneOffTaskCreateSerializer(serializers.ModelSerializer):
         instance = MySQLInstance.objects.get(id=instance_id)
 
         if backup_type in ['hot', 'cold', 'incremental']:
+            # 物理备份要求配置数据目录与 SSH 访问。
             if not instance.data_dir:
                 raise serializers.ValidationError({
                     'data_dir': '热备/冷备/增量备份必须配置实例数据目录'
@@ -576,6 +584,7 @@ class BackupOneOffTaskCreateSerializer(serializers.ModelSerializer):
                 })
 
         if backup_type == 'cold':
+            # 冷备需要安全停止/启动 MySQL 的方式。
             if instance.deployment_type == 'docker' and not instance.docker_container_name:
                 raise serializers.ValidationError({
                     'docker_container_name': '冷备份（Docker）必须配置容器名称'
@@ -586,6 +595,7 @@ class BackupOneOffTaskCreateSerializer(serializers.ModelSerializer):
                 })
 
         if storage_mode:
+            # 将 storage_mode 归一为 store_* 标记。
             attrs['store_local'] = storage_mode == 'default'
             attrs['store_remote'] = storage_mode in ['mysql_host', 'remote_server']
             attrs['store_oss'] = storage_mode == 'oss'
@@ -614,6 +624,7 @@ class BackupOneOffTaskCreateSerializer(serializers.ModelSerializer):
                         'remote_host': '请填写远程主机'
                     })
             elif storage_mode == 'oss':
+                # 对象存储需要完整的凭据与目标路径配置。
                 missing = [
                     key for key in [
                         'oss_endpoint', 'oss_access_key_id', 'oss_access_key_secret',

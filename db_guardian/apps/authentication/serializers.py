@@ -41,6 +41,7 @@ class RoleSerializer(serializers.ModelSerializer):
     
     def get_permission_count(self, obj):
         """获取权限数量"""
+        # 使用计数避免加载全部权限。
         return obj.permissions.count()
     
     def update(self, instance, validated_data):
@@ -97,6 +98,7 @@ class TeamSerializer(serializers.ModelSerializer):
     
     def get_member_count(self, obj):
         """获取成员数量"""
+        # 使用关系计数提高效率。
         return obj.members.count()
 
 

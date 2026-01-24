@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 
 
 def _infer_backup_filenames(record):
+    # 汇总所有存储位置的可能文件名，提高命中率。
     names = []
     for path_value in [record.file_path, record.remote_path, record.object_storage_path]:
         if not path_value:
@@ -69,6 +70,7 @@ def _infer_backup_filenames(record):
     if unique:
         return unique
 
+    # 回退为根据记录元数据生成文件名。
     timestamp = None
     if record.start_time:
         timestamp = record.start_time.strftime('%Y%m%d_%H%M%S')
@@ -97,6 +99,7 @@ def _infer_backup_filenames(record):
 
 
 def _prepare_backup_download_path(record):
+    # 先尝试本地文件，再尝试远程存储，最后尝试对象存储。
     filenames = _infer_backup_filenames(record)
 
     if record.file_path:
@@ -127,6 +130,7 @@ def _prepare_backup_download_path(record):
                     remote_candidates.append(str(Path(remote_path) / name))
 
             for remote_candidate in remote_candidates:
+                # 将远程候选文件下载到临时目录。
                 temp_path = temp_dir / Path(remote_candidate).name
                 if record.remote_protocol:
                     client = RemoteStorageClient(
@@ -153,6 +157,7 @@ def _prepare_backup_download_path(record):
             or record.strategy.oss_access_key_id
             or record.strategy.oss_bucket
         ):
+            # 如策略配置了 OSS 信息，优先使用策略级别配置。
             oss_config = {
                 'endpoint': record.strategy.oss_endpoint,
                 'access_key_id': record.strategy.oss_access_key_id,
@@ -171,6 +176,7 @@ def _prepare_backup_download_path(record):
                 object_candidates.append(object_path)
 
             for object_candidate in object_candidates:
+                # 下载对象存储候选文件到临时目录以便响应/恢复。
                 temp_path = temp_dir / Path(object_candidate).name
                 uploader.download(object_candidate, temp_path)
                 if temp_path.exists() and temp_path.is_file():
@@ -386,6 +392,7 @@ class BackupRecordViewSet(viewsets.ModelViewSet):
         # 删除文件
         if record.file_path and Path(record.file_path).exists():
             try:
+                # 仅删除本地文件；远程/对象存储由其他流程处理。
                 Path(record.file_path).unlink()
                 logger.info(f"已删除备份文件: {record.file_path}")
             except Exception as e:
@@ -423,6 +430,7 @@ class BackupRecordViewSet(viewsets.ModelViewSet):
         
         # 返回文件
         try:
+            # 以流方式返回，避免一次性读入内存。
             response = FileResponse(
                 open(file_path, 'rb'),
                 as_attachment=True,
@@ -502,6 +510,7 @@ class BackupRecordViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         finally:
             try:
+                # 如果是临时下载文件则清理。
                 if restore_path and (
                     not record.file_path
                     or Path(record.file_path).resolve() != restore_path.resolve()
@@ -541,6 +550,7 @@ class BackupRecordViewSet(viewsets.ModelViewSet):
 
         if not request.user.is_superuser:
             admin_checker = IsTeamAdmin()
+            # 恢复操作需要实例级管理员权限。
             if not admin_checker.has_object_permission(request, self, instance):
                 return Response({
                     'success': False,
@@ -555,6 +565,7 @@ class BackupRecordViewSet(viewsets.ModelViewSet):
 
         try:
             with open(temp_path, 'wb') as f_out:
+                # 分块写入，避免占用过多内存。
                 for chunk in backup_file.chunks():
                     f_out.write(chunk)
 
@@ -578,6 +589,7 @@ class BackupRecordViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         finally:
             try:
+                # 始终清理上传的临时文件。
                 if temp_path.exists():
                     temp_path.unlink()
             except Exception as exc:
@@ -644,6 +656,7 @@ class BackupOneOffTaskViewSet(viewsets.ModelViewSet):
         # 使用 ETA 调度
         try:
             execute_oneoff_backup_task = __import__('apps.backups.tasks', fromlist=['execute_oneoff_backup_task']).execute_oneoff_backup_task
+            # 按计划时间调度一次性任务。
             async_result = execute_oneoff_backup_task.apply_async((task.id,), eta=task.run_at)
             task.task_id = async_result.id
             task.save(update_fields=['task_id'])
@@ -655,6 +668,7 @@ class BackupOneOffTaskViewSet(viewsets.ModelViewSet):
         task = self.get_object()
         try:
             execute_oneoff_backup_task = __import__('apps.backups.tasks', fromlist=['execute_oneoff_backup_task']).execute_oneoff_backup_task
+            # 忽略计划时间立即触发。
             async_result = execute_oneoff_backup_task.delay(task.id)
             task.task_id = async_result.id
             task.save(update_fields=['task_id'])

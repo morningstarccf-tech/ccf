@@ -165,6 +165,7 @@ class HasTeamPermission(permissions.BasePermission):
         if not hasattr(view, 'required_permission'):
             return True
         
+        # 具体权限由对象级校验处理。
         return True
     
     def has_object_permission(self, request, view, obj):

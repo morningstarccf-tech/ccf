@@ -27,7 +27,7 @@ class SQLValidator:
         r'DROP\s+DATABASE',
         r'TRUNCATE\s+TABLE',
         r'DELETE\s+FROM\s+\w+\s+WHERE\s+1\s*=\s*1',
-        r'DELETE\s+FROM\s+\w+\s*;?\s*$',  # DELETE without WHERE
+        r'DELETE\s+FROM\s+\w+\s*;?\s*$',  # 无 WHERE 的 DELETE
         r'UPDATE\s+\w+\s+SET.*WHERE\s+1\s*=\s*1',
         r'GRANT\s+ALL',
         r'REVOKE',
@@ -48,7 +48,7 @@ class SQLValidator:
             验证结果字典:
             {
                 'is_valid': bool,           # 是否验证通过
-                'sql_type': str,            # SQL类型
+                'sql_type': str,            # 语句类型
                 'message': str,             # 验证消息
                 'warnings': List[str],      # 警告信息列表
                 'parsed_statements': list   # 解析后的语句列表
@@ -90,6 +90,7 @@ class SQLValidator:
         
         # 3. 检查SQL类型是否在允许列表中
         if allowed_types:
+            # 拒绝不在允许列表中的 SQL 类型。
             if sql_type not in allowed_types:
                 result['message'] = f'不允许执行 {sql_type} 类型的SQL语句'
                 return result
@@ -97,6 +98,7 @@ class SQLValidator:
         # 4. 检查危险操作
         is_dangerous, danger_msg = cls._check_dangerous_operations(sql)
         if is_dangerous:
+            # 在执行前硬拦截高危模式。
             result['message'] = f'检测到危险操作: {danger_msg}'
             return result
         
@@ -214,6 +216,7 @@ class SQLValidator:
         
         # 检查是否已有LIMIT
         sql_upper = sql.upper()
+        # 检测已有 LIMIT，保留更严格的限制。
         limit_match = re.search(r'LIMIT\s+(\d+)', sql_upper)
         
         if limit_match:

@@ -229,6 +229,7 @@ class BackupStrategy(models.Model):
     )
 
     def save(self, *args, **kwargs):
+        # 仅在字段变更时加密，避免重复加密。
         if self.pk:
             old = BackupStrategy.objects.filter(pk=self.pk).only(
                 'remote_password', 'oss_access_key_secret'
@@ -251,6 +252,7 @@ class BackupStrategy(models.Model):
         if not self.remote_password:
             return ''
         try:
+            # 运行时解密远程密码。
             return PasswordEncryptor.decrypt(self.remote_password)
         except Exception:
             return self.remote_password
@@ -259,6 +261,7 @@ class BackupStrategy(models.Model):
         if not self.oss_access_key_secret:
             return ''
         try:
+            # 运行时解密 OSS 密钥。
             return PasswordEncryptor.decrypt(self.oss_access_key_secret)
         except Exception:
             return self.oss_access_key_secret
@@ -758,6 +761,7 @@ class BackupOneOffTask(models.Model):
     )
 
     def save(self, *args, **kwargs):
+        # 仅在字段变更时加密，避免重复加密。
         if self.pk:
             old = BackupOneOffTask.objects.filter(pk=self.pk).only(
                 'remote_password', 'oss_access_key_secret'
@@ -780,6 +784,7 @@ class BackupOneOffTask(models.Model):
         if not self.remote_password:
             return ''
         try:
+            # 运行时解密远程密码。
             return PasswordEncryptor.decrypt(self.remote_password)
         except Exception:
             return self.remote_password
@@ -788,6 +793,7 @@ class BackupOneOffTask(models.Model):
         if not self.oss_access_key_secret:
             return ''
         try:
+            # 运行时解密 OSS 密钥。
             return PasswordEncryptor.decrypt(self.oss_access_key_secret)
         except Exception:
             return self.oss_access_key_secret

@@ -109,6 +109,7 @@ class User(AbstractUser):
         if not membership:
             return False
         
+        # 权限判断由成员在团队中的角色负责。
         return membership.role.permissions.filter(slug=permission_slug).exists()
 
 
@@ -349,6 +350,7 @@ class Team(models.Model):
             user: User 实例或用户 ID
         """
         user_id = user.id if isinstance(user, User) else user
+        # 仅移除成员关系，不删除用户本身。
         TeamMember.objects.filter(team=self, user_id=user_id).delete()
     
     def get_member_role(self, user):

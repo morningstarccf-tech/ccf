@@ -114,6 +114,7 @@ class QueryExecutor:
             
             # 3. 应用行数限制（仅对SELECT查询）
             if apply_limit and sql_type == 'SELECT':
+                # 防止结果集过大影响接口响应。
                 sql = self.validator.apply_row_limit(sql, max_rows)
                 if max_rows < 1000:
                     result['warnings'].append(f'已自动限制返回行数为 {max_rows}')
@@ -164,6 +165,7 @@ class QueryExecutor:
 
             # 10. 缓存结果（仅查询类SQL）
             if sql_type in ['SELECT', 'SHOW', 'DESC', 'EXPLAIN'] and data:
+                # 缓存轻量结果，便于快速回取。
                 cache_data = {
                     'columns': result['columns'],
                     'data': result['data'],
@@ -178,7 +180,7 @@ class QueryExecutor:
                     logger.warning(cache_msg)
             
         except pymysql.Error as e:
-            # MySQL错误
+            # 数据库错误
             error_msg = f'MySQL错误: {str(e)}'
             result['message'] = error_msg
             execution_time_ms = int((time.time() - start_time) * 1000)
@@ -253,7 +255,7 @@ class QueryExecutor:
         if self.user.has_team_permission(team, 'execute_sql_modify'):
             allowed.extend(SQLValidator.ALLOWED_MODIFY_TYPES)
         
-        # DDL权限
+        # 数据定义权限
         if self.user.has_team_permission(team, 'execute_ddl'):
             allowed.extend(SQLValidator.ALLOWED_DDL_TYPES)
         
@@ -431,6 +433,7 @@ class SchemaExplorer:
                 if db_name in ['information_schema', 'mysql', 'performance_schema', 'sys']:
                     continue
                 
+                # 构建每个数据库的结构详情。
                 databases.append(self._get_database_info(connection, db_name))
         
         return databases

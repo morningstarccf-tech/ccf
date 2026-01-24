@@ -34,13 +34,15 @@ def _execute_backup_core(
     from apps.instances.models import MySQLInstance, PasswordEncryptor
     from apps.backups.services import BackupExecutor
 
+    # 保留 backup_record 句柄，失败时可更新状态。
     backup_record = None
 
-    # 1. 获取实例和策略
+    # 1. 解析策略/实例配置并规范化入参。
     remote_config = remote_config_override
     oss_config = oss_config_override
 
     if strategy_id:
+        # 策略执行：从策略模型读取配置。
         strategy = BackupStrategy.objects.select_related('instance').get(id=strategy_id)
         instance = strategy.instance
         databases = strategy.databases or ([database_name] if database_name else None)
@@ -53,6 +55,7 @@ def _execute_backup_core(
         remote_storage_path = strategy.remote_storage_path or None
         storage_mode = strategy.storage_mode
         if store_remote and strategy.storage_mode == 'remote_server':
+            # 远程凭据为加密存储，运行时解密使用。
             remote_config = {
                 'protocol': strategy.remote_protocol,
                 'host': strategy.remote_host,
@@ -62,6 +65,7 @@ def _execute_backup_core(
                 'key_path': strategy.remote_key_path,
             }
         if store_oss:
+            # 对象存储凭据为加密存储，运行时解密使用。
             oss_config = {
                 'endpoint': strategy.oss_endpoint,
                 'access_key_id': strategy.oss_access_key_id,
@@ -70,6 +74,7 @@ def _execute_backup_core(
                 'prefix': strategy.oss_prefix,
             }
     elif instance_id:
+        # 手动执行：使用显式参数与安全默认值。
         instance = MySQLInstance.objects.get(id=instance_id)
         strategy = None
         databases = databases or ([database_name] if database_name else None)
@@ -83,7 +88,7 @@ def _execute_backup_core(
     else:
         raise ValueError("必须提供 strategy_id 或 instance_id")
 
-    # 统一存储策略：选哪就只存哪
+    # 规范化存储模式：每次执行只保留一个目标。
     if storage_mode == 'default':
         store_local = True
         store_remote = False
@@ -107,6 +112,7 @@ def _execute_backup_core(
 
     base_backup = None
     if backup_type == 'incremental':
+        # 增量备份需要可用的基准备份。
         base_backup = BackupRecord.objects.filter(
             instance=instance,
             backup_type__in=['hot', 'incremental'],
@@ -115,7 +121,7 @@ def _execute_backup_core(
         if not base_backup:
             raise Exception("增量备份需要先有成功的热备/增量备份作为基准")
 
-    # 2. 创建备份记录
+    # 2. 创建运行中的记录用于审计与进度跟踪。
     encrypted_remote_password = ''
     if remote_config and remote_config.get('password'):
         encrypted_remote_password = PasswordEncryptor.encrypt(remote_config.get('password'))
@@ -141,10 +147,10 @@ def _execute_backup_core(
 
     logger.info(f"开始备份任务: 记录ID={backup_record.id}, 实例={instance.alias}")
 
-    # 3. 执行备份
+    # 3. 根据类型执行逻辑/物理备份。
     executor = BackupExecutor(instance)
 
-    # 如果有多个数据库，分别备份
+    # 如果指定多个数据库，逐个执行备份。
     if databases and len(databases) > 0:
         for db in databases:
             result = executor.execute_backup(
@@ -164,7 +170,7 @@ def _execute_backup_core(
             if not result['success']:
                 raise Exception(f"数据库 {db} 备份失败: {result.get('error_message')}")
     else:
-        # 备份所有数据库
+        # 备份全部数据库（执行器内部过滤系统库）。
         result = executor.execute_backup(
             database_name=database_name,
             compress=compress,
@@ -182,7 +188,7 @@ def _execute_backup_core(
         if not result['success']:
             raise Exception(result.get('error_message'))
 
-    # 4. 更新备份记录为成功
+    # 4. 标记成功并保存产物信息。
     backup_record.status = 'success'
     backup_record.end_time = timezone.now()
     backup_record.file_path = result['file_path']
@@ -193,7 +199,7 @@ def _execute_backup_core(
 
     logger.info(f"备份任务完成: 记录ID={backup_record.id}")
 
-    # 5. 触发清理任务（可选）
+    # 5. 根据策略配置触发保留清理。
     if strategy and strategy.retention_days:
         cleanup_old_backups.delay(instance_id=instance.id, days=strategy.retention_days)
 
@@ -227,6 +233,7 @@ def execute_backup_task(self, strategy_id=None, instance_id=None,
     backup_record = None
     
     try:
+        # 使用核心执行器处理策略/实例参数。
         backup_record, result = _execute_backup_core(
             strategy_id=strategy_id,
             instance_id=instance_id,
@@ -241,14 +248,14 @@ def execute_backup_task(self, strategy_id=None, instance_id=None,
         error_msg = str(e)
         logger.exception(f"备份任务失败: {error_msg}")
         
-        # 更新备份记录为失败
+        # 失败时更新记录，便于追踪。
         if backup_record:
             backup_record.status = 'failed'
             backup_record.end_time = timezone.now()
             backup_record.error_message = error_msg
             backup_record.save()
         
-        # 重试任务
+        # 使用退避重试处理临时故障。
         if self.request.retries < self.max_retries:
             raise self.retry(exc=e, countdown=60 * (self.request.retries + 1))
         
@@ -262,6 +269,7 @@ def execute_backup_task(self, strategy_id=None, instance_id=None,
 def execute_oneoff_backup_task(self, task_id):
     from apps.backups.models import BackupOneOffTask
 
+    # 加载一次性任务信息并标记为运行中。
     task = BackupOneOffTask.objects.select_related('instance').filter(id=task_id).first()
     if not task:
         return {'success': False, 'error_message': '定时任务不存在'}
@@ -272,6 +280,7 @@ def execute_oneoff_backup_task(self, task_id):
 
     backup_record = None
     try:
+        # 根据任务配置构建远程/OSS 参数。
         remote_config_override = None
         oss_config_override = None
         if task.store_remote and task.storage_mode == 'remote_server':
@@ -292,6 +301,7 @@ def execute_oneoff_backup_task(self, task_id):
                 'prefix': task.oss_prefix,
             }
 
+        # 执行核心备份流程。
         backup_record, result = _execute_backup_core(
             instance_id=task.instance_id,
             databases=task.databases or None,
@@ -314,6 +324,7 @@ def execute_oneoff_backup_task(self, task_id):
         task.save(update_fields=['status', 'finished_at', 'backup_record', 'error_message'])
         return result
     except Exception as exc:
+        # 持久化失败状态，便于审计。
         error_msg = str(exc)
         task.status = 'failed'
         task.finished_at = timezone.now()
@@ -342,13 +353,13 @@ def cleanup_old_backups(instance_id=None, days=None):
     from apps.instances.models import MySQLInstance
     
     try:
-        # 计算过期时间
+        # 计算保留策略的截止时间。
         if days is None:
             days = 30  # 默认保留30天
         
         cutoff_time = timezone.now() - timedelta(days=days)
         
-        # 构建查询
+        # 按实例过滤过期记录（如有提供）。
         query = BackupRecord.objects.filter(
             status='success',
             created_at__lt=cutoff_time
@@ -357,14 +368,14 @@ def cleanup_old_backups(instance_id=None, days=None):
         if instance_id:
             query = query.filter(instance_id=instance_id)
         
-        # 获取过期记录
+        # 先删除文件，再删除记录。
         expired_records = query.all()
         
         deleted_count = 0
         freed_space_mb = 0
         
         for record in expired_records:
-            # 删除文件
+            # 如果本地文件存在则删除。
             if record.file_path and os.path.exists(record.file_path):
                 try:
                     file_path = Path(record.file_path)
@@ -375,7 +386,7 @@ def cleanup_old_backups(instance_id=None, days=None):
                 except Exception as e:
                     logger.error(f"删除文件失败 {record.file_path}: {str(e)}")
             
-            # 删除记录
+            # 删除记录，保持元数据一致。
             record.delete()
             deleted_count += 1
         
@@ -405,6 +416,7 @@ def cleanup_temp_backups(hours=None):
         hours: 过期小时数，默认读取配置或 24 小时
     """
     try:
+        # 清理下载/上传流程产生的临时文件。
         if hours is None:
             hours = getattr(settings, 'BACKUP_TEMP_RETENTION_HOURS', 24)
         cutoff_time = timezone.now() - timedelta(hours=hours)
@@ -463,7 +475,7 @@ def verify_backup_integrity(backup_id):
     import gzip
     
     try:
-        # 获取备份记录
+        # 获取备份记录并校验磁盘文件。
         backup_record = BackupRecord.objects.get(id=backup_id)
         
         if not backup_record.file_path:
@@ -475,7 +487,7 @@ def verify_backup_integrity(backup_id):
         
         file_path = Path(backup_record.file_path)
         
-        # 1. 检查文件是否存在
+        # 1) File existence check.
         if not file_path.exists():
             return {
                 'success': False,
@@ -483,7 +495,7 @@ def verify_backup_integrity(backup_id):
                 'message': '备份文件不存在'
             }
         
-        # 2. 检查文件大小是否合理
+        # 2) File size sanity check.
         actual_size = file_path.stat().st_size / (1024 * 1024)
         if actual_size < 0.01:  # 小于10KB认为异常
             return {
@@ -492,7 +504,7 @@ def verify_backup_integrity(backup_id):
                 'message': f'备份文件过小: {actual_size:.2f} MB'
             }
         
-        # 3. 如果是压缩文件，尝试读取
+        # 3) For gz files, try to read the header to validate gzip integrity.
         if file_path.suffix == '.gz':
             try:
                 with gzip.open(file_path, 'rb') as f:
@@ -505,7 +517,7 @@ def verify_backup_integrity(backup_id):
                     'message': f'压缩文件损坏: {str(e)}'
                 }
         
-        # 4. 检查文件是否可读
+        # 4) Check file readability.
         try:
             with open(file_path, 'rb') as f:
                 # 读取前1KB检查是否可读
@@ -558,19 +570,19 @@ def check_backup_limits(instance_id):
     try:
         max_files = getattr(settings, 'BACKUP_MAX_FILES_PER_INSTANCE', 50)
         
-        # 获取该实例的所有成功备份，按时间倒序
+        # 按实例执行文件数量限制。
         backups = BackupRecord.objects.filter(
             instance_id=instance_id,
             status='success'
         ).order_by('-created_at')
         
-        # 如果超出限制，删除最旧的备份
+        # 超限时优先删除最旧的备份。
         if backups.count() > max_files:
             excess_backups = backups[max_files:]
             deleted_count = 0
             
             for backup in excess_backups:
-                # 删除文件
+                # 删除本地文件（如存在）。
                 if backup.file_path and os.path.exists(backup.file_path):
                     try:
                         Path(backup.file_path).unlink()
@@ -578,7 +590,7 @@ def check_backup_limits(instance_id):
                     except Exception as e:
                         logger.error(f"删除文件失败: {str(e)}")
                 
-                # 删除记录
+                # 删除记录，保持元数据一致。
                 backup.delete()
                 deleted_count += 1
             

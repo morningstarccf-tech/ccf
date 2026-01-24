@@ -148,6 +148,7 @@ class QueryHistory(models.Model):
             return None
         
         from django.core.cache import cache
+        # 缓存内容是列名/数据等组成的轻量字典。
         return cache.get(self.result_cache_key)
     
     def cache_result(self, result_data, timeout=3600):

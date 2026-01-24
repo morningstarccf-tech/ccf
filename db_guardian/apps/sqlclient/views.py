@@ -79,6 +79,7 @@ class QueryExecutionView(APIView):
         
         # 执行查询
         executor = QueryExecutor(instance, request.user)
+        # 执行器负责校验、权限与历史记录写入。
         result = executor.execute_query(
             sql=serializer.validated_data['sql'],
             database=serializer.validated_data.get('database'),
@@ -140,6 +141,7 @@ class SchemaView(APIView):
         
         # 获取模式信息
         explorer = SchemaExplorer(instance)
+        # 结构浏览器返回数据库/表/列的层级结构。
         schema_data = explorer.get_database_schema(database)
         
         # 检查是否有错误
